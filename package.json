@@ -1,0 +1,24 @@
+{
+  "name": "trinitycapitalproduction",
+  "version": "1.0.0",
+  "description": "server for Trinity Capital",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "author": "Ferguson Software Solutions",
+  "license": "ISC",
+  "dependencies": {
+    "crypto": "^1.0.1",
+    "dotenv": "^16.6.1",
+    "express": "^4.18.2",
+    "googleapis": "^150.0.1",
+    "mongodb": "^6.3.0",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.16",
+    "nodemon": "^3.0.3",
+    "socket.io": "^4.7.4",
+    "socket.io-client": "^4.8.1",
+    "stripe": "^17.5.0"
+  }
+}
