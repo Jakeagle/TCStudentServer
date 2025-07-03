@@ -17,6 +17,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",");
 const mongoUri = process.env.MONGODB_URI;
 
 // All Stripe-related code (checkouts, webhooks, and references) removed as requested.
+//Redeploy comment for github
 
 /*****************************************LICENSE MANAGEMENT***************************************************/
 
