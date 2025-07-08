@@ -17,7 +17,6 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",");
 const mongoUri = process.env.MONGODB_URI;
 
 // All Stripe-related code (checkouts, webhooks, and references) removed as requested.
-//Redeploy comment for github
 
 /*****************************************LICENSE MANAGEMENT***************************************************/
 
@@ -1681,6 +1680,50 @@ app.get("/messages/:userId", async (req, res) => {
     res.status(200).json({ threads }); // Return threads, not messages
   } catch (error) {
     console.error("Error fetching messages:", error);
+    res
+      .status(500)
+      .json({ error: "Internal Server Error", details: error.message });
+  }
+});
+
+app.get("/classmates/:studentName", async (req, res) => {
+  try {
+    const { studentName } = req.params;
+    if (!studentName) {
+      return res.status(400).json({ error: "Student name is required." });
+    }
+
+    // 1. Find the current student to get their teacher's name
+    const currentStudent = await client
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .findOne({ memberName: studentName });
+
+    if (!currentStudent || !currentStudent.teacher) {
+      return res
+        .status(404)
+        .json({ error: "Student or student's teacher not found." });
+    }
+
+    const teacherName = currentStudent.teacher;
+
+    // 2. Find all students with the same teacher, excluding the current student
+    const classmates = await client
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .find({
+        teacher: teacherName,
+        memberName: { $ne: studentName }, // $ne operator excludes the current student
+      })
+      .project({ memberName: 1, _id: 0 }) // Only return the memberName field
+      .toArray();
+
+    // 3. Extract just the names into a simple array
+    const classmateNames = classmates.map((c) => c.memberName);
+
+    res.status(200).json(classmateNames);
+  } catch (error) {
+    console.error("Error fetching classmates:", error);
     res
       .status(500)
       .json({ error: "Internal Server Error", details: error.message });
