@@ -1739,12 +1739,10 @@ app.post("/newThread", async (req, res) => {
       !Array.isArray(participants) ||
       participants.length !== 2
     ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "Invalid participants data. An array of two participants is required.",
-        });
+      return res.status(400).json({
+        error:
+          "Invalid participants data. An array of two participants is required.",
+      });
     }
 
     // Create a canonical threadId by sorting participants to prevent duplicates
@@ -1758,12 +1756,10 @@ app.post("/newThread", async (req, res) => {
       .findOne({ threadId: threadId });
 
     if (existingThread) {
-      return res
-        .status(200)
-        .json({
-          message: "Thread already exists.",
-          threadId: existingThread.threadId,
-        });
+      return res.status(200).json({
+        message: "Thread already exists.",
+        threadId: existingThread.threadId,
+      });
     }
 
     // If not, create a new thread
@@ -1781,12 +1777,23 @@ app.post("/newThread", async (req, res) => {
       .collection("threads")
       .insertOne(newThread);
 
-    res
-      .status(201)
-      .json({
-        message: "New thread created successfully.",
-        threadId: newThread.threadId,
-      });
+    // Emit a socket event to both participants to notify them of the new thread
+    const participant1Socket = userSockets.get(sortedParticipants[0]);
+    const participant2Socket = userSockets.get(sortedParticipants[1]);
+
+    if (participant1Socket) {
+      participant1Socket.emit("newThreadCreated", newThread);
+      console.log(`Emitted newThreadCreated to ${sortedParticipants[0]}`);
+    }
+    if (participant2Socket) {
+      participant2Socket.emit("newThreadCreated", newThread);
+      console.log(`Emitted newThreadCreated to ${sortedParticipants[1]}`);
+    }
+
+    res.status(201).json({
+      message: "New thread created successfully.",
+      threadId: newThread.threadId,
+    });
   } catch (error) {
     console.error("Error creating new thread:", error);
     res
