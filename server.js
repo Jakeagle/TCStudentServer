@@ -1,19 +1,19 @@
-require("dotenv").config();
+require('dotenv').config();
 
-const express = require("express");
+const express = require('express');
 const app = express();
-const cron = require("node-cron");
-const { fork } = require("child_process");
-const crypto = require("crypto");
-const nodemailer = require("nodemailer");
-const { google } = require("googleapis");
+const cron = require('node-cron');
+const { fork } = require('child_process');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
+const { google } = require('googleapis');
 
-const cors = require("cors");
-const bodyParser = require("body-parser");
+const cors = require('cors');
+const bodyParser = require('body-parser');
 let Profiles;
 
 const port = process.env.PORT || 3000;
-const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",");
+const allowedOrigins = process.env.ALLOWED_ORIGINS.split(',');
 const mongoUri = process.env.MONGODB_URI;
 
 // All Stripe-related code (checkouts, webhooks, and references) removed as requested.
@@ -21,86 +21,86 @@ const mongoUri = process.env.MONGODB_URI;
 /*****************************************LICENSE MANAGEMENT***************************************************/
 
 // Get school licenses for admin dashboard
-app.get("/school-licenses/:admin_email", async (req, res) => {
+app.get('/school-licenses/:admin_email', async (req, res) => {
   try {
     const { admin_email } = req.params;
 
     const licenses = await client
-      .db("TrinityCapital")
-      .collection("School Licenses")
+      .db('TrinityCapital')
+      .collection('School Licenses')
       .find({ admin_email: admin_email, is_active: true })
       .toArray();
 
     res.json(licenses);
   } catch (error) {
-    console.error("Error fetching school licenses:", error);
+    console.error('Error fetching school licenses:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Get access codes for a school
-app.get("/access-codes/:school_name", async (req, res) => {
+app.get('/access-codes/:school_name', async (req, res) => {
   try {
     const { school_name } = req.params;
 
     const codes = await client
-      .db("TrinityCapital")
-      .collection("Access Codes")
+      .db('TrinityCapital')
+      .collection('Access Codes')
       .find({ school: school_name })
       .toArray();
 
     res.json(codes);
   } catch (error) {
-    console.error("Error fetching access codes:", error);
+    console.error('Error fetching access codes:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Validate license capacity before account creation
-app.post("/validate-license-capacity", async (req, res) => {
+app.post('/validate-license-capacity', async (req, res) => {
   try {
     const { access_code } = req.body;
 
     // Find the access code
     const code = await client
-      .db("TrinityCapital")
-      .collection("Access Codes")
+      .db('TrinityCapital')
+      .collection('Access Codes')
       .findOne({ code: access_code });
 
     if (!code) {
-      return res.status(404).json({ error: "Invalid access code" });
+      return res.status(404).json({ error: 'Invalid access code' });
     }
 
     if (code.used) {
-      return res.status(400).json({ error: "Access code already used" });
+      return res.status(400).json({ error: 'Access code already used' });
     }
 
     if (new Date() > new Date(code.expires_at)) {
-      return res.status(400).json({ error: "Access code expired" });
+      return res.status(400).json({ error: 'Access code expired' });
     }
 
     // Check license capacity
     const license = await client
-      .db("TrinityCapital")
-      .collection("School Licenses")
+      .db('TrinityCapital')
+      .collection('School Licenses')
       .findOne({ school_name: code.school, is_active: true });
 
     if (!license) {
       return res
         .status(404)
-        .json({ error: "No active license found for this school" });
+        .json({ error: 'No active license found for this school' });
     }
 
     // Count current usage
     const currentUsers = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .countDocuments({ school: code.school });
 
     const totalLicenses = license.student_licenses + license.teacher_licenses;
 
     if (currentUsers >= totalLicenses) {
-      return res.status(400).json({ error: "License capacity exceeded" });
+      return res.status(400).json({ error: 'License capacity exceeded' });
     }
 
     res.json({
@@ -110,18 +110,18 @@ app.post("/validate-license-capacity", async (req, res) => {
       remaining_capacity: totalLicenses - currentUsers,
     });
   } catch (error) {
-    console.error("Error validating license capacity:", error);
+    console.error('Error validating license capacity:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 /*****************************************Socket.io***************************************************/
 
-const server = require("http").createServer(app);
-const io = require("socket.io")(server, {
+const server = require('http').createServer(app);
+const io = require('socket.io')(server, {
   cors: {
-    origin: process.env.SOCKET_ORIGIN.split(","),
-    methods: ["GET", "POST"],
+    origin: process.env.SOCKET_ORIGIN.split(','),
+    methods: ['GET', 'POST'],
     credentials: true,
   },
 });
@@ -130,26 +130,26 @@ const io = require("socket.io")(server, {
 const userSockets = new Map();
 
 // Socket.IO connection handling
-io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+io.on('connection', socket => {
+  console.log('User connected:', socket.id);
 
   // Handle user identification
-  socket.on("identify", (userId) => {
+  socket.on('identify', userId => {
     try {
-      console.log("User identified:", userId);
+      console.log('User identified:', userId);
       userSockets.set(userId, socket);
 
       // Acknowledge successful identification
-      socket.emit("identified", { success: true });
+      socket.emit('identified', { success: true });
     } catch (error) {
-      console.error("Error during user identification:", error);
-      socket.emit("error", { message: "Failed to identify user" });
+      console.error('Error during user identification:', error);
+      socket.emit('error', { message: 'Failed to identify user' });
     }
   });
 
   // Handle studentCreated event from remote client (e.g., localhost:5000)
-  socket.on("studentCreated", (data, callback) => {
-    console.log("Received studentCreated event from remote client:", data);
+  socket.on('studentCreated', (data, callback) => {
+    console.log('Received studentCreated event from remote client:', data);
     // Prepare student data with correct defaults and structure
     const studentData = {
       memberName: data.memberName,
@@ -157,14 +157,14 @@ io.on("connection", (socket) => {
       savingsBalance: data.savingsAccount?.balanceTotal ?? 0,
       grade: data.grade ?? 0,
       lessonsCompleted: data.lessonsCompleted ?? 0,
-      classPeriod: data.classPeriod ?? "",
+      classPeriod: data.classPeriod ?? '',
     };
-    io.emit("studentAdded", studentData);
-    if (typeof callback === "function") {
-      console.log("Sending ack callback for studentCreated event");
+    io.emit('studentAdded', studentData);
+    if (typeof callback === 'function') {
+      console.log('Sending ack callback for studentCreated event');
       callback({ success: true });
     } else {
-      console.warn("No callback function provided for studentCreated event");
+      console.warn('No callback function provided for studentCreated event');
     }
   });
 
@@ -174,20 +174,20 @@ io.on("connection", (socket) => {
    * =================================================================
    * This is the single entry point for all messages sent from any client.
    */
-  socket.on("sendMessage", async (data, callback) => {
+  socket.on('sendMessage', async (data, callback) => {
     const { senderId, recipientId, messageContent } = data;
 
-    console.log("Received sendMessage event:", data);
+    console.log('Received sendMessage event:', data);
 
     if (!senderId || !recipientId || !messageContent) {
-      console.error("Invalid message data received:", data);
-      if (callback) callback({ success: false, error: "Invalid data" });
+      console.error('Invalid message data received:', data);
+      if (callback) callback({ success: false, error: 'Invalid data' });
       return;
     }
 
     const timestamp = new Date();
     // Check if it's a class-wide message
-    const isClassMessage = recipientId.startsWith("class-message-");
+    const isClassMessage = recipientId.startsWith('class-message-');
     let threadId;
     let participants = [];
 
@@ -195,54 +195,54 @@ io.on("connection", (socket) => {
       let thread;
       if (isClassMessage) {
         threadId = recipientId; // e.g., 'class-message-Ms.Thompson'
-        participants = [senderId, "class-message-recipient"]; // A generic recipient for class messages
+        participants = [senderId, 'class-message-recipient']; // A generic recipient for class messages
         // Find the class message thread for this teacher
         thread = await client
-          .db("TrinityCapital")
-          .collection("threads")
+          .db('TrinityCapital')
+          .collection('threads')
           .findOne({ threadId: threadId });
         if (!thread) {
           // Create new class message thread
           thread = {
             threadId: threadId,
-            type: "class",
+            type: 'class',
             participants: participants,
             messages: [],
             createdAt: timestamp,
           };
           await client
-            .db("TrinityCapital")
-            .collection("threads")
+            .db('TrinityCapital')
+            .collection('threads')
             .insertOne(thread);
         }
       } else {
         // Private message
         // Ensure consistent threadId for private chats (sorted participants)
         const sortedParticipants = [senderId, recipientId].sort();
-        threadId = sortedParticipants.join("_"); // e.g., 'Emily Johnson_Ms.Thompson'
+        threadId = sortedParticipants.join('_'); // e.g., 'Emily Johnson_Ms.Thompson'
         participants = sortedParticipants;
 
         // Find existing private thread
         thread = await client
-          .db("TrinityCapital")
-          .collection("threads")
+          .db('TrinityCapital')
+          .collection('threads')
           .findOne({
             threadId: threadId,
-            type: "private",
+            type: 'private',
           });
 
         if (!thread) {
           // Create new private thread
           thread = {
             threadId: threadId,
-            type: "private",
+            type: 'private',
             participants: participants,
             messages: [],
             createdAt: timestamp,
           };
           await client
-            .db("TrinityCapital")
-            .collection("threads")
+            .db('TrinityCapital')
+            .collection('threads')
             .insertOne(thread);
         }
       }
@@ -258,14 +258,14 @@ io.on("connection", (socket) => {
 
       // Add message to the thread and update lastMessageTimestamp
       await client
-        .db("TrinityCapital")
-        .collection("threads")
+        .db('TrinityCapital')
+        .collection('threads')
         .updateOne(
           { threadId: threadId },
           {
             $push: { messages: messageDoc },
             $set: { lastMessageTimestamp: timestamp },
-          }
+          },
         );
 
       // --- Broadcasting to relevant users ---
@@ -273,14 +273,14 @@ io.on("connection", (socket) => {
       if (isClassMessage) {
         const teacherName = senderId; // senderId is the teacher's full name
         const teacherDoc = await client
-          .db("TrinityCapital")
-          .collection("Teachers")
+          .db('TrinityCapital')
+          .collection('Teachers')
           .findOne({ name: teacherName });
-        if (!teacherDoc) throw new Error("Teacher not found");
+        if (!teacherDoc) throw new Error('Teacher not found');
 
         const students = await client
-          .db("TrinityCapital")
-          .collection("User Profiles")
+          .db('TrinityCapital')
+          .collection('User Profiles')
           .find({ teacher: teacherDoc.name })
           .project({ memberName: 1 })
           .toArray();
@@ -290,7 +290,7 @@ io.on("connection", (socket) => {
           const studentSocket = userSockets.get(student.memberName);
           if (studentSocket) {
             // Send the message as if it's from the teacher to the student, marked as class message
-            studentSocket.emit("newMessage", {
+            studentSocket.emit('newMessage', {
               senderId: teacherName,
               recipientId: student.memberName, // The student's ID
               messageContent,
@@ -303,80 +303,80 @@ io.on("connection", (socket) => {
         // Send to the teacher (sender)
         const teacherSocket = userSockets.get(teacherName);
         if (teacherSocket) {
-          teacherSocket.emit("newMessage", messageDoc); // Send the original messageDoc
+          teacherSocket.emit('newMessage', messageDoc); // Send the original messageDoc
         }
       } else {
         // Private message: send to recipient and sender
         const recipientSocket = userSockets.get(recipientId);
         if (recipientSocket) {
-          recipientSocket.emit("newMessage", messageDoc);
+          recipientSocket.emit('newMessage', messageDoc);
           console.log(`Forwarded private message to ${recipientId}`);
         }
         const senderSocket = userSockets.get(senderId);
         if (senderSocket) {
-          senderSocket.emit("newMessage", messageDoc);
+          senderSocket.emit('newMessage', messageDoc);
         }
       }
       if (callback) callback({ success: true });
     } catch (error) {
-      console.error("Error processing sendMessage:", error);
+      console.error('Error processing sendMessage:', error);
       if (callback) callback({ success: false, error: error.message });
     }
   });
 
-  socket.on("disconnect", () => {
+  socket.on('disconnect', () => {
     try {
       // Remove socket from map when user disconnects
       for (const [userId, userSocket] of userSockets.entries()) {
         if (userSocket === socket) {
-          console.log("User disconnected:", userId);
+          console.log('User disconnected:', userId);
           userSockets.delete(userId);
           break;
         }
       }
     } catch (error) {
-      console.error("Error during disconnect:", error);
+      console.error('Error during disconnect:', error);
     }
   });
 
   // Handle errors
-  socket.on("error", (error) => {
-    console.error("Socket error:", error);
+  socket.on('error', error => {
+    console.error('Socket error:', error);
   });
 });
 
 // Listen for 'studentCreated' event from another server (localhost:5000)
-const { io: ClientIO } = require("socket.io-client");
+const { io: ClientIO } = require('socket.io-client');
 const EXTERNAL_SOCKET_URL =
-  process.env.EXTERNAL_SOCKET_URL || "http://localhost:5000";
+  process.env.EXTERNAL_SOCKET_URL || 'http://localhost:5000';
 const externalSocket = ClientIO(EXTERNAL_SOCKET_URL);
 
-externalSocket.on("connect", () => {
+externalSocket.on('connect', () => {
   console.log(
-    "Connected to external server at localhost:5000 for studentCreated events"
+    'Connected to external server at localhost:5000 for studentCreated events',
   );
 });
 
-externalSocket.on("studentCreated", (data, callback) => {
-  console.log("Received studentCreated event from localhost:5000:", data);
+externalSocket.on('studentCreated', (data, callback) => {
+  console.log('Received studentCreated event from localhost:5000:', data);
   // Emit to all connected clients on this server
-  io.emit("studentAdded", data);
+  io.emit('studentAdded', data);
   // Send confirmation back to 5000
-  if (typeof callback === "function") {
-    console.log("Sending ack callback for studentCreated event");
+  if (typeof callback === 'function') {
+    console.log('Sending ack callback for studentCreated event');
     callback({ success: true });
   } else {
-    console.warn("No callback function provided for studentCreated event");
+    console.warn('No callback function provided for studentCreated event');
   }
 });
 
-externalSocket.on("disconnect", () => {
-  console.log("Disconnected from external server at localhost:5000");
+externalSocket.on('disconnect', () => {
+  console.log('Disconnected from external server at localhost:5000');
 });
 
 /*****************************************MongoDB***************************************************/
 
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion } = require('mongodb');
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(mongoUri, {
@@ -392,9 +392,9 @@ async function run() {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
+    await client.db('admin').command({ ping: 1 });
     console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
+      'Pinged your deployment. You successfully connected to MongoDB!',
     );
   } finally {
     // // Ensures that the client will close when you finish/error
@@ -405,16 +405,16 @@ run().catch(console.dir);
 
 /*****************************************Main Page***************************************************/
 
-app.use(express.static("public"));
+app.use(express.static('public'));
 app.use(express.json());
 app.use(
   cors({
     origin: allowedOrigins,
     credentials: true,
-  })
+  }),
 );
 
-app.post("/initialBalance", async (req, res) => {
+app.post('/initialBalance', async (req, res) => {
   const { parcel } = req.body;
 
   const profile = parcel;
@@ -426,11 +426,11 @@ app.post("/initialBalance", async (req, res) => {
 
   let checkingBalance;
 
-  profile.checkingAccount.transactions.forEach((transaction) => {
+  profile.checkingAccount.transactions.forEach(transaction => {
     checkingTransAmounts.push(transaction.amount);
   });
 
-  profile.savingsAccount.transactions.forEach((transaction) => {
+  profile.savingsAccount.transactions.forEach(transaction => {
     savingsTransAmounts.push(transaction.amount);
   });
 
@@ -438,61 +438,61 @@ app.post("/initialBalance", async (req, res) => {
   savingsBalance = savingsTransAmounts.reduce((acc, mov) => acc + mov, 0);
 
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "checkingAccount.accountHolder": memberName },
+      { 'checkingAccount.accountHolder': memberName },
       {
-        $set: { "checkingAccount.balanceTotal": checkingBalance },
-      }
+        $set: { 'checkingAccount.balanceTotal': checkingBalance },
+      },
     );
 
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "savingsAccount.accountHolder": memberName },
+      { 'savingsAccount.accountHolder': memberName },
       {
-        $set: { "savingsAccount.balanceTotal": savingsBalance },
-      }
+        $set: { 'savingsAccount.balanceTotal': savingsBalance },
+      },
     );
 
   const updatedUserProfile = await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
-    .findOne({ "checkingAccount.accountHolder": memberName });
+    .db('TrinityCapital')
+    .collection('User Profiles')
+    .findOne({ 'checkingAccount.accountHolder': memberName });
 
   const updatedChecking = updatedUserProfile.checkingAccount;
 
   // Send update only to specific user
   const userSocket = userSockets.get(memberName);
   if (userSocket) {
-    userSocket.emit("checkingAccountUpdate", updatedChecking);
+    userSocket.emit('checkingAccountUpdate', updatedChecking);
   }
 });
 
-app.get("/profiles", async (req, res) => {
+app.get('/profiles', async (req, res) => {
   try {
     const profiles = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .find()
       .toArray();
 
     // Send profiles only to the requesting user
     const userSocket = userSockets.get(req.query.userId);
     if (userSocket) {
-      userSocket.emit("profiles", profiles);
+      userSocket.emit('profiles', profiles);
     }
 
     res.status(200).send(profiles);
   } catch (error) {
-    console.error("Error fetching profiles:", error);
-    res.status(500).send("Internal Server Error");
+    console.error('Error fetching profiles:', error);
+    res.status(500).send('Internal Server Error');
   }
 });
 
-app.post("/loans", async (req, res) => {
+app.post('/loans', async (req, res) => {
   const { parcel } = req.body;
   const profile = parcel[0];
   const amount = parcel[1];
@@ -500,56 +500,56 @@ app.post("/loans", async (req, res) => {
 
   try {
     const UserProfile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": name });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': name });
 
     // Update the transactions in the user profile
     const balance = UserProfile.checkingAccount.transactions.reduce(
       (acc, mov) => acc + mov,
-      0
+      0,
     );
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": name },
+        { 'checkingAccount.accountHolder': name },
         {
-          $push: { "checkingAccount.transactions": amount },
-          $set: { "checkingAccount.balanceTotal": balance },
-        }
+          $push: { 'checkingAccount.transactions': amount },
+          $set: { 'checkingAccount.balanceTotal': balance },
+        },
       );
     let newDate = new Date().toISOString();
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": name },
-        { $push: { "checkingAccount.movementsDates": newDate } }
+        { 'checkingAccount.accountHolder': name },
+        { $push: { 'checkingAccount.movementsDates': newDate } },
       );
     const updatedUserProfile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": name });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': name });
 
     const updatedChecking = updatedUserProfile.checkingAccount;
 
     // Send update only to specific user
     const userSocket = userSockets.get(name);
     if (userSocket) {
-      userSocket.emit("checkingAccountUpdate", updatedChecking);
+      userSocket.emit('checkingAccountUpdate', updatedChecking);
     }
 
-    res.status(200).json({ message: "Transaction successful" });
+    res.status(200).json({ message: 'Transaction successful' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Internal server error" });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 /*****************************************Transfers***************************************************/
 
-app.post("/transfer", async (req, res) => {
+app.post('/transfer', async (req, res) => {
   const { parcel } = req.body;
 
   const currentProfile = parcel[0];
@@ -564,64 +564,64 @@ app.post("/transfer", async (req, res) => {
   let newDate = new Date().toISOString();
 
   if (
-    accountFromPg.accountType === "Checking" &&
-    accountToPg.accountType === "Savings"
+    accountFromPg.accountType === 'Checking' &&
+    accountToPg.accountType === 'Savings'
   ) {
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": memberNamePg },
+        { 'checkingAccount.accountHolder': memberNamePg },
         {
           $push: {
-            "checkingAccount.transactions": {
+            'checkingAccount.transactions': {
               amount: -amount,
-              interval: "once",
+              interval: 'once',
               Name: ` ${accountFromPg.accountType} ---> ${accountToPg.accountType}`,
-              Category: "Transfer",
+              Category: 'Transfer',
             },
           },
-        }
+        },
       );
 
     let newDate = new Date().toISOString();
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": memberNamePg },
-        { $push: { "checkingAccount.movementsDates": newDate } }
+        { 'checkingAccount.accountHolder': memberNamePg },
+        { $push: { 'checkingAccount.movementsDates': newDate } },
       );
 
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "savingsAccount.accountHolder": memberNamePg },
+        { 'savingsAccount.accountHolder': memberNamePg },
         {
           $push: {
-            "savingsAccount.transactions": {
+            'savingsAccount.transactions': {
               amount: amount,
-              interval: "once",
+              interval: 'once',
               Name: ` ${accountFromPg.accountType} ---> ${accountToPg.accountType}`,
-              Category: "Transfer",
+              Category: 'Transfer',
             },
           },
-        }
+        },
       );
 
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "savingsAccount.accountHolder": memberNamePg },
-        { $push: { "savingsAccount.movementsDates": newDate } }
+        { 'savingsAccount.accountHolder': memberNamePg },
+        { $push: { 'savingsAccount.movementsDates': newDate } },
       );
 
     const updatedUserProfile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": memberNamePg });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': memberNamePg });
 
     const upCheck = updatedUserProfile.checkingAccount;
     const upSav = updatedUserProfile.savingsAccount;
@@ -631,64 +631,64 @@ app.post("/transfer", async (req, res) => {
   }
 
   if (
-    accountFromPg.accountType === "Savings" &&
-    accountToPg.accountType === "Checking"
+    accountFromPg.accountType === 'Savings' &&
+    accountToPg.accountType === 'Checking'
   ) {
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "savingsAccount.accountHolder": memberNamePg },
+        { 'savingsAccount.accountHolder': memberNamePg },
         {
           $push: {
-            "savingsAccount.transactions": {
+            'savingsAccount.transactions': {
               amount: -amount,
-              interval: "once",
+              interval: 'once',
               Name: ` ${accountFromPg.accountType} ---> ${accountToPg.accountType}`,
-              Category: "Transfer",
+              Category: 'Transfer',
             },
           },
-        }
+        },
       );
 
     let newDate = new Date().toISOString();
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "savingsAccount.accountHolder": memberNamePg },
-        { $push: { "savingsAccount.movementsDates": newDate } }
+        { 'savingsAccount.accountHolder': memberNamePg },
+        { $push: { 'savingsAccount.movementsDates': newDate } },
       );
 
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": memberNamePg },
+        { 'checkingAccount.accountHolder': memberNamePg },
         {
           $push: {
-            "checkingAccount.transactions": {
+            'checkingAccount.transactions': {
               amount: amount,
-              interval: "once",
+              interval: 'once',
               Name: ` ${accountFromPg.accountType} ---> ${accountToPg.accountType}`,
-              Category: "Transfer",
+              Category: 'Transfer',
             },
           },
-        }
+        },
       );
 
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": memberNamePg },
-        { $push: { "checkingAccount.movementsDates": newDate } }
+        { 'checkingAccount.accountHolder': memberNamePg },
+        { $push: { 'checkingAccount.movementsDates': newDate } },
       );
 
     const updatedUserProfile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": memberNamePg });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': memberNamePg });
 
     const upCheck = updatedUserProfile.checkingAccount;
     const upSav = updatedUserProfile.savingsAccount;
@@ -700,7 +700,7 @@ app.post("/transfer", async (req, res) => {
 
 const balanceCalc = async function (memberName, acc, type) {
   console.log(
-    `Starting balanceCalc for member: ${memberName}, account type: ${type}`
+    `Starting balanceCalc for member: ${memberName}, account type: ${type}`,
   );
 
   let amounts = [];
@@ -708,14 +708,14 @@ const balanceCalc = async function (memberName, acc, type) {
 
   // Collecting transaction amounts
   try {
-    acc.transactions.forEach((transaction) => {
+    acc.transactions.forEach(transaction => {
       amounts.push(transaction.amount);
     });
     console.log(`Collected transaction amounts: ${amounts}`);
   } catch (error) {
     console.error(
       `Error collecting transaction amounts for ${memberName}:`,
-      error
+      error,
     );
     return; // Exit early if there's an error
   }
@@ -731,23 +731,23 @@ const balanceCalc = async function (memberName, acc, type) {
 
   // Updating database with new balance
   try {
-    if (type === "Checking") {
+    if (type === 'Checking') {
       console.log(`Updating Checking account balance for ${memberName}`);
       await client
-        .db("TrinityCapital")
-        .collection("User Profiles")
+        .db('TrinityCapital')
+        .collection('User Profiles')
         .updateOne(
-          { "checkingAccount.accountHolder": memberName },
-          { $set: { "checkingAccount.balanceTotal": balance } }
+          { 'checkingAccount.accountHolder': memberName },
+          { $set: { 'checkingAccount.balanceTotal': balance } },
         );
-    } else if (type === "Savings") {
+    } else if (type === 'Savings') {
       console.log(`Updating Savings account balance for ${memberName}`);
       await client
-        .db("TrinityCapital")
-        .collection("User Profiles")
+        .db('TrinityCapital')
+        .collection('User Profiles')
         .updateOne(
-          { "savingsAccount.accountHolder": memberName },
-          { $set: { "savingsAccount.balanceTotal": balance } }
+          { 'savingsAccount.accountHolder': memberName },
+          { $set: { 'savingsAccount.balanceTotal': balance } },
         );
     }
   } catch (error) {
@@ -759,9 +759,9 @@ const balanceCalc = async function (memberName, acc, type) {
   let updatedUserProfile;
   try {
     updatedUserProfile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": memberName });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': memberName });
 
     if (!updatedUserProfile) {
       console.error(`No user profile found for ${memberName}`);
@@ -770,7 +770,7 @@ const balanceCalc = async function (memberName, acc, type) {
 
     console.log(
       `Fetched updated profile for ${memberName}:`,
-      updatedUserProfile
+      updatedUserProfile,
     );
   } catch (error) {
     console.error(`Error fetching updated profile for ${memberName}:`, error);
@@ -786,9 +786,9 @@ const balanceCalc = async function (memberName, acc, type) {
     const userSocket = userSockets.get(memberName);
     if (userSocket) {
       console.log(
-        `Emitting 'checkingAccountUpdate' event to socket for ${memberName}`
+        `Emitting 'checkingAccountUpdate' event to socket for ${memberName}`,
       );
-      userSocket.emit("checkingAccountUpdate", updatedChecking);
+      userSocket.emit('checkingAccountUpdate', updatedChecking);
     } else {
       console.warn(`No socket found for ${memberName}`);
     }
@@ -797,7 +797,7 @@ const balanceCalc = async function (memberName, acc, type) {
   }
 };
 
-app.post("/bills", async (req, res) => {
+app.post('/bills', async (req, res) => {
   const { parcel } = req.body;
 
   const profile = parcel[0];
@@ -820,21 +820,21 @@ app.post("/bills", async (req, res) => {
   };
 
   const billSetter = async function (type, name, newTrans) {
-    if (type === "bill") {
+    if (type === 'bill') {
       await client
-        .db("TrinityCapital")
-        .collection("User Profiles")
+        .db('TrinityCapital')
+        .collection('User Profiles')
         .updateOne(
-          { "checkingAccount.accountHolder": name },
-          { $push: { "checkingAccount.bills": newTrans } }
+          { 'checkingAccount.accountHolder': name },
+          { $push: { 'checkingAccount.bills': newTrans } },
         );
-    } else if (type === "payment") {
+    } else if (type === 'payment') {
       await client
-        .db("TrinityCapital")
-        .collection("User Profiles")
+        .db('TrinityCapital')
+        .collection('User Profiles')
         .updateOne(
-          { "checkingAccount.accountHolder": name },
-          { $push: { "checkingAccount.payments": newTrans } }
+          { 'checkingAccount.accountHolder': name },
+          { $push: { 'checkingAccount.payments': newTrans } },
         );
     }
 
@@ -846,9 +846,9 @@ app.post("/bills", async (req, res) => {
 
   const billManager = async function (name) {
     const newProfile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": name });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': name });
 
     let bills = newProfile.checkingAccount.bills;
 
@@ -858,41 +858,41 @@ app.post("/bills", async (req, res) => {
       const now = new Date();
       let delay;
 
-      if (time === "weekly") {
+      if (time === 'weekly') {
         // Map weekly schedules based on the current day of the week
         const weeklySchedules = {
-          0: "0 0 * * 0", // Sunday
-          1: "0 0 * * 1", // Monday
-          2: "0 0 * * 2", // Tuesday
-          3: "0 0 * * 3", // Wednesday
-          4: "0 0 * * 4", // Thursday
-          5: "0 0 * * 5", // Friday
-          6: "0 0 * * 6", // Saturday
+          0: '0 0 * * 0', // Sunday
+          1: '0 0 * * 1', // Monday
+          2: '0 0 * * 2', // Tuesday
+          3: '0 0 * * 3', // Wednesday
+          4: '0 0 * * 4', // Thursday
+          5: '0 0 * * 5', // Friday
+          6: '0 0 * * 6', // Saturday
         };
 
         delay = weeklySchedules[now.getDay()];
         console.log(delay, 472);
-      } else if (time === "bi-weekly") {
+      } else if (time === 'bi-weekly') {
         // Run on the 1st and 15th of each month at midnight
         delay = `0 0 1,15 * *`;
-      } else if (time === "monthly") {
+      } else if (time === 'monthly') {
         // Map monthly schedules based on the current month
         const monthlySchedules = {
-          0: "0 0 1 1 *", // January
-          1: "0 0 1 2 *", // February
-          2: "0 0 1 3 *", // March
-          3: "0 0 1 4 *", // April
-          4: "0 0 1 5 *", // May
-          5: "0 0 1 6 *", // June
-          6: "0 0 1 7 *", // July
-          7: "0 0 1 8 *", // August
-          8: "0 0 1 9 *", // September
-          9: "0 0 1 10 *", // October
-          10: "0 0 1 11 *", // November
-          11: "0 0 1 12 *", // December
+          0: '0 0 1 1 *', // January
+          1: '0 0 1 2 *', // February
+          2: '0 0 1 3 *', // March
+          3: '0 0 1 4 *', // April
+          4: '0 0 1 5 *', // May
+          5: '0 0 1 6 *', // June
+          6: '0 0 1 7 *', // July
+          7: '0 0 1 8 *', // August
+          8: '0 0 1 9 *', // September
+          9: '0 0 1 10 *', // October
+          10: '0 0 1 11 *', // November
+          11: '0 0 1 12 *', // December
         };
         delay = monthlySchedules[now.getMonth()];
-      } else if (time === "yearly") {
+      } else if (time === 'yearly') {
         // Run yearly on January 1st at midnight
         delay = `0 0 1 1 *`;
       }
@@ -901,37 +901,37 @@ app.post("/bills", async (req, res) => {
         console.log(`Executing bill for ${name} with interval: ${time}`);
         let newDate = new Date().toISOString();
         await client
-          .db("TrinityCapital")
-          .collection("User Profiles")
+          .db('TrinityCapital')
+          .collection('User Profiles')
           .updateOne(
-            { "checkingAccount.accountHolder": name },
+            { 'checkingAccount.accountHolder': name },
             {
-              $push: { "checkingAccount.transactions": bills[i] },
-            }
+              $push: { 'checkingAccount.transactions': bills[i] },
+            },
           );
 
         await client
-          .db("TrinityCapital")
-          .collection("User Profiles")
+          .db('TrinityCapital')
+          .collection('User Profiles')
           .updateOne(
-            { "checkingAccount.accountHolder": name },
+            { 'checkingAccount.accountHolder': name },
             {
-              $push: { "checkingAccount.movementsDates": newDate },
-            }
+              $push: { 'checkingAccount.movementsDates': newDate },
+            },
           );
 
         updateCheckingBalanceFromTransactions(name);
         const updatedProfile = await client
-          .db("TrinityCapital")
-          .collection("User Profiles")
-          .findOne({ "checkingAccount.accountHolder": name });
+          .db('TrinityCapital')
+          .collection('User Profiles')
+          .findOne({ 'checkingAccount.accountHolder': name });
 
         const updatedChecking = updatedProfile.checkingAccount;
 
         // Send update only to specific user
         const userSocket = userSockets.get(name);
         if (userSocket) {
-          userSocket.emit("checkingAccountUpdate", updatedChecking);
+          userSocket.emit('checkingAccountUpdate', updatedChecking);
         }
       };
 
@@ -943,9 +943,9 @@ app.post("/bills", async (req, res) => {
   const paymentManager = async function (name) {
     let interval;
     const newProfile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": name });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': name });
 
     let payments = newProfile.checkingAccount.payments;
 
@@ -956,78 +956,78 @@ app.post("/bills", async (req, res) => {
       const currentDay = now.getDate();
       let delay;
 
-      if (time === "weekly") {
+      if (time === 'weekly') {
         // Map weekly schedules based on the current day of the week
         const weeklySchedules = {
-          0: "0 0 * * 0", // Sunday
-          1: "0 0 * * 1", // Monday
-          2: "0 0 * * 2", // Tuesday
-          3: "0 0 * * 3", // Wednesday
-          4: "0 0 * * 4", // Thursday
-          5: "0 0 * * 5", // Friday
-          6: "0 0 * * 6", // Saturday
+          0: '0 0 * * 0', // Sunday
+          1: '0 0 * * 1', // Monday
+          2: '0 0 * * 2', // Tuesday
+          3: '0 0 * * 3', // Wednesday
+          4: '0 0 * * 4', // Thursday
+          5: '0 0 * * 5', // Friday
+          6: '0 0 * * 6', // Saturday
         };
 
         delay = weeklySchedules[now.getDay()];
         console.log(delay, 558);
-      } else if (time === "bi-weekly") {
+      } else if (time === 'bi-weekly') {
         delay = `0 0 1,15 * *`;
-      } else if (time === "monthly") {
+      } else if (time === 'monthly') {
         // Map monthly schedules based on the current month
         const monthlySchedules = {
-          0: "0 0 1 1 *", // January
-          1: "0 0 1 2 *", // February
-          2: "0 0 1 3 *", // March
-          3: "0 0 1 4 *", // April
-          4: "0 0 1 5 *", // May
-          5: "0 0 1 6 *", // June
-          6: "0 0 1 7 *", // July
-          7: "0 0 1 8 *", // August
-          8: "0 0 1 9 *", // September
-          9: "0 0 1 10 *", // October
-          10: "0 0 1 11 *", // November
-          11: "0 0 1 12 *", // December
+          0: '0 0 1 1 *', // January
+          1: '0 0 1 2 *', // February
+          2: '0 0 1 3 *', // March
+          3: '0 0 1 4 *', // April
+          4: '0 0 1 5 *', // May
+          5: '0 0 1 6 *', // June
+          6: '0 0 1 7 *', // July
+          7: '0 0 1 8 *', // August
+          8: '0 0 1 9 *', // September
+          9: '0 0 1 10 *', // October
+          10: '0 0 1 11 *', // November
+          11: '0 0 1 12 *', // December
         };
         delay = monthlySchedules[now.getMonth()];
-      } else if (time === "yearly") {
+      } else if (time === 'yearly') {
         delay = `0 0 1 1 *`;
       }
 
       const paymentSet = async () => {
         let newDate = new Date().toISOString();
         await client
-          .db("TrinityCapital")
-          .collection("User Profiles")
+          .db('TrinityCapital')
+          .collection('User Profiles')
           .updateOne(
-            { "checkingAccount.accountHolder": name },
+            { 'checkingAccount.accountHolder': name },
             {
-              $push: { "checkingAccount.transactions": payments[i] },
-            }
+              $push: { 'checkingAccount.transactions': payments[i] },
+            },
           );
 
         await client
-          .db("TrinityCapital")
-          .collection("User Profiles")
+          .db('TrinityCapital')
+          .collection('User Profiles')
           .updateOne(
-            { "checkingAccount.accountHolder": name },
+            { 'checkingAccount.accountHolder': name },
             {
-              $push: { "checkingAccount.movementsDates": newDate },
-            }
+              $push: { 'checkingAccount.movementsDates': newDate },
+            },
           );
 
         updateCheckingBalanceFromTransactions(name);
 
         const updatedProfile = await client
-          .db("TrinityCapital")
-          .collection("User Profiles")
-          .findOne({ "checkingAccount.accountHolder": name });
+          .db('TrinityCapital')
+          .collection('User Profiles')
+          .findOne({ 'checkingAccount.accountHolder': name });
 
         const updatedChecking = updatedProfile.checkingAccount;
 
         // Send update only to specific user
         const userSocket = userSockets.get(name);
         if (userSocket) {
-          userSocket.emit("checkingAccountUpdate", updatedChecking);
+          userSocket.emit('checkingAccountUpdate', updatedChecking);
         }
       };
       cron.schedule(delay, paymentSet);
@@ -1039,9 +1039,9 @@ app.post("/bills", async (req, res) => {
     let balanceArray = [];
     let balance;
     let profile = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ "checkingAccount.accountHolder": name });
+      .db('TrinityCapital')
+      .collection('User Profiles')
+      .findOne({ 'checkingAccount.accountHolder': name });
 
     if (profile.checkingAccount.transactions.length <= 0) {
       balance = 0;
@@ -1054,19 +1054,19 @@ app.post("/bills", async (req, res) => {
       }
     }
     await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": name },
+        { 'checkingAccount.accountHolder': name },
         {
-          $set: { "checkingAccount.balanceTotal": balance },
-        }
+          $set: { 'checkingAccount.balanceTotal': balance },
+        },
       );
   };
   const updatedUserProfile = await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
-    .findOne({ "checkingAccount.accountHolder": prfName });
+    .db('TrinityCapital')
+    .collection('User Profiles')
+    .findOne({ 'checkingAccount.accountHolder': prfName });
 
   const updatedChecking = updatedUserProfile.checkingAccount;
 
@@ -1075,15 +1075,15 @@ app.post("/bills", async (req, res) => {
   // Send update only to specific user
   const userSocket = userSockets.get(prfName);
   if (userSocket) {
-    userSocket.emit("checkingAccountUpdate", updatedChecking);
+    userSocket.emit('checkingAccountUpdate', updatedChecking);
   }
 });
 
-app.post("/simulateTimeTravel", async (req, res) => {
+app.post('/simulateTimeTravel', async (req, res) => {
   const { userName, days } = req.body; // How many days to simulate
 
   if (!userName || !days) {
-    return res.status(400).json({ error: "Missing required parameters" });
+    return res.status(400).json({ error: 'Missing required parameters' });
   }
 
   console.log(`Simulating ${days} days for ${userName}...`);
@@ -1096,8 +1096,8 @@ app.post("/simulateTimeTravel", async (req, res) => {
       .status(200)
       .json({ message: `Simulated ${days} days successfully for ${userName}` });
   } catch (error) {
-    console.error("Error simulating time travel:", error);
-    return res.status(500).json({ error: "Internal Server Error" });
+    console.error('Error simulating time travel:', error);
+    return res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
@@ -1107,8 +1107,8 @@ const timeMultiplier = 1; // 1 second = 1 day
 
 async function billManagerTimeTravel(userName, daysToSimulate) {
   const userProfile = await client
-    .db("TrinityCapital")
-    .collection("Time Travel Profiles") // Ensure we're using time travel profiles
+    .db('TrinityCapital')
+    .collection('Time Travel Profiles') // Ensure we're using time travel profiles
     .findOne({ userName: userName });
 
   if (!userProfile) {
@@ -1136,11 +1136,11 @@ async function billManagerTimeTravel(userName, daysToSimulate) {
 
   for (let transaction of transactionsToProcess) {
     await client
-      .db("TrinityCapital")
-      .collection("Time Travel Profiles")
+      .db('TrinityCapital')
+      .collection('Time Travel Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": userName },
-        { $push: { "checkingAccount.transactions": transaction } }
+        { 'checkingAccount.accountHolder': userName },
+        { $push: { 'checkingAccount.transactions': transaction } },
       );
 
     console.log(`Processed bill: ${transaction.Name} for ${userName}`);
@@ -1151,9 +1151,9 @@ async function billManagerTimeTravel(userName, daysToSimulate) {
 
 async function paymentManagerTimeTravel(userName, daysToSimulate) {
   const userProfile = await client
-    .db("TrinityCapital")
-    .collection("Time Travel Profiles")
-    .findOne({ "checkingAccount.accountHolder": userName });
+    .db('TrinityCapital')
+    .collection('Time Travel Profiles')
+    .findOne({ 'checkingAccount.accountHolder': userName });
 
   if (!userProfile) {
     throw new Error(`Time travel profile for ${userName} not found`);
@@ -1180,11 +1180,11 @@ async function paymentManagerTimeTravel(userName, daysToSimulate) {
 
   for (let transaction of transactionsToProcess) {
     await client
-      .db("TrinityCapital")
-      .collection("Time Travel Profiles")
+      .db('TrinityCapital')
+      .collection('Time Travel Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": userName },
-        { $push: { "checkingAccount.transactions": transaction } }
+        { 'checkingAccount.accountHolder': userName },
+        { $push: { 'checkingAccount.transactions': transaction } },
       );
 
     console.log(`Processed payment: ${transaction.Name} for ${userName}`);
@@ -1196,10 +1196,10 @@ async function paymentManagerTimeTravel(userName, daysToSimulate) {
 /************************************ Helper Function ****************************************/
 
 function shouldProcessTransaction(interval, day) {
-  if (interval === "weekly" && day % 7 === 0) return true;
-  if (interval === "bi-weekly" && day % 14 === 0) return true;
-  if (interval === "monthly" && day % 30 === 0) return true;
-  if (interval === "yearly" && day % 365 === 0) return true;
+  if (interval === 'weekly' && day % 7 === 0) return true;
+  if (interval === 'bi-weekly' && day % 14 === 0) return true;
+  if (interval === 'monthly' && day % 30 === 0) return true;
+  if (interval === 'yearly' && day % 365 === 0) return true;
   return false;
 }
 
@@ -1209,9 +1209,9 @@ async function balanceCalcTimeTravel(userName) {
     let balance;
     // Use the Time Travel Profiles collection
     let profile = await client
-      .db("TrinityCapital")
-      .collection("Time Travel Profiles")
-      .findOne({ "checkingAccount.accountHolder": userName });
+      .db('TrinityCapital')
+      .collection('Time Travel Profiles')
+      .findOne({ 'checkingAccount.accountHolder': userName });
 
     if (
       !profile ||
@@ -1219,7 +1219,7 @@ async function balanceCalcTimeTravel(userName) {
       !profile.checkingAccount.transactions
     ) {
       console.error(
-        `No transactions found for time travel profile: ${userName}`
+        `No transactions found for time travel profile: ${userName}`,
       );
       return;
     }
@@ -1235,20 +1235,20 @@ async function balanceCalcTimeTravel(userName) {
     }
 
     await client
-      .db("TrinityCapital")
-      .collection("Time Travel Profiles")
+      .db('TrinityCapital')
+      .collection('Time Travel Profiles')
       .updateOne(
-        { "checkingAccount.accountHolder": userName },
-        { $set: { "checkingAccount.balanceTotal": balance } }
+        { 'checkingAccount.accountHolder': userName },
+        { $set: { 'checkingAccount.balanceTotal': balance } },
       );
 
     const updatedProfile = await client
-      .db("TrinityCapital")
-      .collection("Time Travel Profiles")
-      .findOne({ "checkingAccount.accountHolder": userName });
+      .db('TrinityCapital')
+      .collection('Time Travel Profiles')
+      .findOne({ 'checkingAccount.accountHolder': userName });
     const userSocket = userSockets.get(userName);
     if (userSocket && updatedProfile) {
-      userSocket.emit("checkingAccountUpdate", updatedProfile.checkingAccount);
+      userSocket.emit('checkingAccountUpdate', updatedProfile.checkingAccount);
     }
   } catch (error) {
     console.error(`Error in balanceCalcTimeTravel for ${userName}:`, error);
@@ -1256,7 +1256,7 @@ async function balanceCalcTimeTravel(userName) {
 }
 /********************************************************DEPOSITS***********************************************/
 
-app.post("/deposits", async (req, res) => {
+app.post('/deposits', async (req, res) => {
   let newDate = new Date().toISOString();
   const { parcel } = req.body;
 
@@ -1265,34 +1265,34 @@ app.post("/deposits", async (req, res) => {
   const memberName = parcel[2];
 
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "checkingAccount.accountHolder": memberName },
+      { 'checkingAccount.accountHolder': memberName },
       {
         $push: {
-          "checkingAccount.transactions": {
+          'checkingAccount.transactions': {
             amount: -amount,
-            interval: "once",
+            interval: 'once',
             Name: `${destination}`,
-            Category: "Check Deposit",
+            Category: 'Check Deposit',
           },
         },
-      }
+      },
     );
 
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "checkingAccount.accountHolder": memberName },
-      { $push: { "checkingAccount.movementsDates": newDate } }
+      { 'checkingAccount.accountHolder': memberName },
+      { $push: { 'checkingAccount.movementsDates': newDate } },
     );
 
   const updatedUserProfile = await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
-    .findOne({ "checkingAccount.accountHolder": memberName });
+    .db('TrinityCapital')
+    .collection('User Profiles')
+    .findOne({ 'checkingAccount.accountHolder': memberName });
 
   const updatedChecking = updatedUserProfile.checkingAccount;
 
@@ -1302,11 +1302,11 @@ app.post("/deposits", async (req, res) => {
   // Send update only to specific user
   const userSocket = userSockets.get(memberName);
   if (userSocket) {
-    userSocket.emit("checkingAccountUpdate", updatedChecking);
+    userSocket.emit('checkingAccountUpdate', updatedChecking);
   }
 });
 
-app.post("/sendFunds", async (req, res) => {
+app.post('/sendFunds', async (req, res) => {
   const { parcel } = req.body;
 
   const destinationProfile = parcel[0];
@@ -1318,60 +1318,60 @@ app.post("/sendFunds", async (req, res) => {
   let destinationDate = new Date();
 
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "checkingAccount.accountHolder": destinationProfile },
+      { 'checkingAccount.accountHolder': destinationProfile },
       {
         $push: {
-          "checkingAccount.transactions": {
+          'checkingAccount.transactions': {
             amount: destinationAmount,
-            interval: "once",
+            interval: 'once',
             Name: `Deposit from ${sender}`,
-            Category: "Money Deposit",
+            Category: 'Money Deposit',
           },
         },
-      }
+      },
     );
 
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "checkingAccount.accountHolder": destinationProfile },
-      { $push: { "checkingAccount.movementsDates": destinationDate } }
+      { 'checkingAccount.accountHolder': destinationProfile },
+      { $push: { 'checkingAccount.movementsDates': destinationDate } },
     );
 
   //FOR SENDER
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "checkingAccount.accountHolder": sender },
+      { 'checkingAccount.accountHolder': sender },
       {
         $push: {
-          "checkingAccount.transactions": {
+          'checkingAccount.transactions': {
             amount: -destinationAmount,
-            interval: "once",
+            interval: 'once',
             Name: `Deposit to ${destinationProfile}`,
-            Category: "Money Deposit",
+            Category: 'Money Deposit',
           },
         },
-      }
+      },
     );
 
   await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .updateOne(
-      { "checkingAccount.accountHolder": sender },
-      { $push: { "checkingAccount.movementsDates": destinationDate } }
+      { 'checkingAccount.accountHolder': sender },
+      { $push: { 'checkingAccount.movementsDates': destinationDate } },
     );
 
   const updatedUserProfile = await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
-    .findOne({ "checkingAccount.accountHolder": sender });
+    .db('TrinityCapital')
+    .collection('User Profiles')
+    .findOne({ 'checkingAccount.accountHolder': sender });
 
   const updatedChecking = updatedUserProfile.checkingAccount;
 
@@ -1380,14 +1380,14 @@ app.post("/sendFunds", async (req, res) => {
   // Send update only to specific user
   const userSocket = userSockets.get(sender);
   if (userSocket) {
-    userSocket.emit("checkingAccountUpdate", updatedChecking);
+    userSocket.emit('checkingAccountUpdate', updatedChecking);
   }
 });
 
-app.post("/timeTravelProfiles", async (req, res) => {
-  const db = client.db("TrinityCapital");
-  const profilesCollection = db.collection("User Profiles");
-  const timeTravelCollection = db.collection("Time Travel Profiles");
+app.post('/timeTravelProfiles', async (req, res) => {
+  const db = client.db('TrinityCapital');
+  const profilesCollection = db.collection('User Profiles');
+  const timeTravelCollection = db.collection('Time Travel Profiles');
 
   const { userName } = req.body; // Get username from request
 
@@ -1408,7 +1408,7 @@ app.post("/timeTravelProfiles", async (req, res) => {
 
       // Emit only to the user's socket
       if (userSocket) {
-        userSocket.emit("checkingAccountUpdate", updatedChecking);
+        userSocket.emit('checkingAccountUpdate', updatedChecking);
       }
 
       return res.status(200).json(existingProfile);
@@ -1418,7 +1418,7 @@ app.post("/timeTravelProfiles", async (req, res) => {
     let regularProfile = await profilesCollection.findOne({ userName });
 
     if (!regularProfile) {
-      return res.status(404).json({ error: "User profile not found" });
+      return res.status(404).json({ error: 'User profile not found' });
     }
 
     // Create a new Time Travel Profile with empty transactions
@@ -1429,29 +1429,29 @@ app.post("/timeTravelProfiles", async (req, res) => {
       accountLevel: regularProfile.accountLevel, // Keep existing account level
       checkingAccount: {
         routingNumber: 141257185,
-        currency: "USD",
-        locale: "en-US",
+        currency: 'USD',
+        locale: 'en-US',
         created: new Date().toISOString(),
         accountHolder: regularProfile.memberName,
         balanceTotal: 0,
         bills: [],
         payments: [],
-        accountType: "Checking",
+        accountType: 'Checking',
         accountNumber: regularProfile.checkingAccount.accountNumber,
         movementsDates: [],
         transactions: [],
       },
       savingsAccount: {
         routingNumber: 141257185,
-        currency: "USD",
-        locale: "en-US",
+        currency: 'USD',
+        locale: 'en-US',
         created: new Date().toISOString(),
         accountHolder: regularProfile.memberName,
         username: regularProfile.userName,
         balanceTotal: 0,
         bills: [],
         payments: [],
-        accountType: "Savings",
+        accountType: 'Savings',
         accountNumber: regularProfile.savingsAccount.accountNumber,
         movementsDates: [],
         transactions: [],
@@ -1467,100 +1467,100 @@ app.post("/timeTravelProfiles", async (req, res) => {
 
     // Emit only to the user's socket
     if (userSocket) {
-      userSocket.emit("checkingAccountUpdate", updatedChecking);
+      userSocket.emit('checkingAccountUpdate', updatedChecking);
     }
 
     return res.status(201).json(newTimeTravelProfile);
   } catch (error) {
-    console.error("Error creating time travel profile:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error('Error creating time travel profile:', error);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
 /**************************************************LESSON SERVER FUNCTIONS*********************************************/
 
-app.post("/lessonArrays", async (req, res) => {
+app.post('/lessonArrays', async (req, res) => {
   try {
     // In a real application, you would fetch this from a 'Lessons' collection in your database.
     // For now, we'll use a mock array that matches the structure in index.html.
     const lessons = [
-      { name: "Tutorial", icon: "fa-rocket rocketIcon", id: "lesson1Div" },
-      { name: "Transfers", icon: "fa-money-bill-transfer", id: "lesson2Div" },
+      { name: 'Tutorial', icon: 'fa-rocket rocketIcon', id: 'lesson1Div' },
+      { name: 'Transfers', icon: 'fa-money-bill-transfer', id: 'lesson2Div' },
       {
-        name: "Bills & Paychecks",
-        icon: "fa-file-invoice-dollar bpImg",
-        id: "lesson3Div",
+        name: 'Bills & Paychecks',
+        icon: 'fa-file-invoice-dollar bpImg',
+        id: 'lesson3Div',
       },
       {
-        name: "Deposts",
-        icon: "fa-money-check depositImg",
-        id: "lesson4Div",
+        name: 'Deposts',
+        icon: 'fa-money-check depositImg',
+        id: 'lesson4Div',
       },
-      { name: "Sending Money", icon: "fa-dollar-sign smImg", id: "lesson5Div" },
+      { name: 'Sending Money', icon: 'fa-dollar-sign smImg', id: 'lesson5Div' },
       {
-        name: "Credit",
-        icon: "fa-regular fa-credit-card creditImg",
-        id: "lesson6Div",
+        name: 'Credit',
+        icon: 'fa-regular fa-credit-card creditImg',
+        id: 'lesson6Div',
       },
     ];
 
     const htmlCode = lessons
       .map(
-        (lesson) => `
+        lesson => `
       <div class="col-1 lessonDiv ${lesson.id}">
         <p class="lessonImg"><i class="fa-solid ${lesson.icon}"></i></p>
         <h5 class="lessonName">${lesson.name}</h5>
-      </div>`
+      </div>`,
       )
-      .join("");
+      .join('');
 
-    io.emit("lessonHtml", htmlCode);
-    res.status(200).json({ message: "Lesson HTML emitted successfully." });
+    io.emit('lessonHtml', htmlCode);
+    res.status(200).json({ message: 'Lesson HTML emitted successfully.' });
   } catch (error) {
-    console.error("Error in /lessonArrays:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    console.error('Error in /lessonArrays:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
 // --- SMTP CONFIG ENCRYPTION UTILS ---
-const SMTP_SECRET = process.env.SMTP_SECRET || "changeme!";
+const SMTP_SECRET = process.env.SMTP_SECRET || 'changeme!';
 function getKey() {
   // Always return a Buffer of exactly 32 bytes
-  return Buffer.alloc(32, SMTP_SECRET, "utf8");
+  return Buffer.alloc(32, SMTP_SECRET, 'utf8');
 }
 function encrypt(text) {
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv("aes-256-cbc", getKey(), iv);
-  let encrypted = cipher.update(text, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  return iv.toString("hex") + ":" + encrypted;
+  const cipher = crypto.createCipheriv('aes-256-cbc', getKey(), iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted;
 }
 function decrypt(text) {
-  const [ivHex, encrypted] = text.split(":");
-  const iv = Buffer.from(ivHex, "hex");
-  const decipher = crypto.createDecipheriv("aes-256-cbc", getKey(), iv);
-  let decrypted = decipher.update(encrypted, "hex", "utf8");
-  decrypted += decipher.final("utf8");
+  const [ivHex, encrypted] = text.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-cbc', getKey(), iv);
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
   return decrypted;
 }
 
 // --- SAVE SMTP CONFIG ---
-app.post("/saveSmtpConfig", async (req, res) => {
+app.post('/saveSmtpConfig', async (req, res) => {
   const { teacherUsername, config } = req.body;
   if (!teacherUsername || !config)
-    return res.status(400).json({ error: "Missing teacherUsername or config" });
+    return res.status(400).json({ error: 'Missing teacherUsername or config' });
   try {
     const toSave = { ...config };
     if (toSave.smtpPassword) toSave.smtpPassword = encrypt(toSave.smtpPassword);
     await client
-      .db("TrinityCapital")
-      .collection("SmtpConfigs")
+      .db('TrinityCapital')
+      .collection('SmtpConfigs')
       .updateOne({ teacherUsername }, { $set: toSave }, { upsert: true });
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error("Failed to save SMTP config:", err);
+    console.error('Failed to save SMTP config:', err);
     res.status(500).json({
-      error: "Failed to save SMTP config",
+      error: 'Failed to save SMTP config',
       details: err.message,
       stack: err.stack,
     });
@@ -1568,37 +1568,37 @@ app.post("/saveSmtpConfig", async (req, res) => {
 });
 
 // --- GET SMTP CONFIG (no password) ---
-app.get("/getSmtpConfig/:teacherUsername", async (req, res) => {
+app.get('/getSmtpConfig/:teacherUsername', async (req, res) => {
   const { teacherUsername } = req.params;
   if (!teacherUsername)
-    return res.status(400).json({ error: "Missing teacherUsername" });
+    return res.status(400).json({ error: 'Missing teacherUsername' });
   try {
     const doc = await client
-      .db("TrinityCapital")
-      .collection("SmtpConfigs")
+      .db('TrinityCapital')
+      .collection('SmtpConfigs')
       .findOne({ teacherUsername });
     if (!doc) return res.status(200).json({});
     const { smtpPassword, ...rest } = doc;
     res.status(200).json(rest);
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch SMTP config" });
+    res.status(500).json({ error: 'Failed to fetch SMTP config' });
   }
 });
 
 /****************************************TEACHER DASHBOARD********************************************/
 
-app.post("/findTeacher", async (req, res) => {
+app.post('/findTeacher', async (req, res) => {
   const { parcel } = req.body;
   const teachUser = parcel[0];
   const teachPin = parcel[1];
 
-  console.log("teachUser:", teachUser);
-  console.log("teachPin:", teachPin);
+  console.log('teachUser:', teachUser);
+  console.log('teachPin:', teachPin);
 
   try {
     let teacher = await client
-      .db("TrinityCapital")
-      .collection("Teachers")
+      .db('TrinityCapital')
+      .collection('Teachers')
       .findOne({ username: teachUser, pin: teachPin });
 
     if (teacher !== null) {
@@ -1611,32 +1611,32 @@ app.post("/findTeacher", async (req, res) => {
       });
     } else {
       console.log(
-        `Teacher not found for username: ${teachUser}, pin: ${teachPin}`
+        `Teacher not found for username: ${teachUser}, pin: ${teachPin}`,
       );
       res.status(404).json({ found: false });
     }
   } catch (error) {
-    console.error("Error in /findTeacher:", error);
-    res.status(500).json({ error: "Internal Server Error" });
+    console.error('Error in /findTeacher:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
-app.post("/getStudents", async (req, res) => {
+app.post('/getStudents', async (req, res) => {
   const { parcel } = req.body;
 
   const periodNum = parcel[0];
   const teacherName = parcel[1];
 
-  console.log("Period Number:", periodNum);
-  console.log("Teacher Name:", teacherName);
+  console.log('Period Number:', periodNum);
+  console.log('Teacher Name:', teacherName);
 
   let students = await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .find({ classPeriod: periodNum, teacher: teacherName })
     .toArray();
 
-  io.emit("students", students);
+  io.emit('students', students);
 });
 
 /**
@@ -1645,11 +1645,11 @@ app.post("/getStudents", async (req, res) => {
  * =================================================================
  * Fetches all messages for a given user (student or teacher) and groups them into threads.
  */
-app.get("/messages/:userId", async (req, res) => {
+app.get('/messages/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
-      return res.status(400).json({ error: "User ID is required." });
+      return res.status(400).json({ error: 'User ID is required.' });
     }
 
     let query = {
@@ -1658,8 +1658,8 @@ app.get("/messages/:userId", async (req, res) => {
 
     // If the userId is a teacher, also include their specific class message thread
     const teacherDoc = await client
-      .db("TrinityCapital")
-      .collection("Teachers")
+      .db('TrinityCapital')
+      .collection('Teachers')
       .findOne({ name: userId });
     if (teacherDoc) {
       query = {
@@ -1671,138 +1671,22 @@ app.get("/messages/:userId", async (req, res) => {
     }
 
     const threads = await client
-      .db("TrinityCapital")
-      .collection("threads")
+      .db('TrinityCapital')
+      .collection('threads')
       .find(query)
       .sort({ lastMessageTimestamp: -1 }) // Sort by most recent activity
       .toArray();
 
     res.status(200).json({ threads }); // Return threads, not messages
   } catch (error) {
-    console.error("Error fetching messages:", error);
+    console.error('Error fetching messages:', error);
     res
       .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
+      .json({ error: 'Internal Server Error', details: error.message });
   }
 });
 
-app.get("/classmates/:studentName", async (req, res) => {
-  try {
-    const { studentName } = req.params;
-    if (!studentName) {
-      return res.status(400).json({ error: "Student name is required." });
-    }
-
-    // 1. Find the current student to get their teacher's name
-    const currentStudent = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .findOne({ memberName: studentName });
-
-    if (!currentStudent || !currentStudent.teacher) {
-      return res
-        .status(404)
-        .json({ error: "Student or student's teacher not found." });
-    }
-
-    const teacherName = currentStudent.teacher;
-
-    // 2. Find all students with the same teacher, excluding the current student
-    const classmates = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
-      .find({
-        teacher: teacherName,
-        memberName: { $ne: studentName }, // $ne operator excludes the current student
-      })
-      .project({ memberName: 1, _id: 0 }) // Only return the memberName field
-      .toArray();
-
-    // 3. Extract just the names into a simple array
-    const classmateNames = classmates.map((c) => c.memberName);
-
-    res.status(200).json(classmateNames);
-  } catch (error) {
-    console.error("Error fetching classmates:", error);
-    res
-      .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
-  }
-});
-
-app.post("/newThread", async (req, res) => {
-  try {
-    const { participants } = req.body;
-
-    if (
-      !participants ||
-      !Array.isArray(participants) ||
-      participants.length !== 2
-    ) {
-      return res.status(400).json({
-        error:
-          "Invalid participants data. An array of two participants is required.",
-      });
-    }
-
-    // Create a canonical threadId by sorting participants to prevent duplicates
-    const sortedParticipants = participants.sort();
-    const threadId = sortedParticipants.join("_");
-
-    // Check if a thread with this ID already exists
-    const existingThread = await client
-      .db("TrinityCapital")
-      .collection("threads")
-      .findOne({ threadId: threadId });
-
-    if (existingThread) {
-      return res.status(200).json({
-        message: "Thread already exists.",
-        threadId: existingThread.threadId,
-      });
-    }
-
-    // If not, create a new thread
-    const newThread = {
-      threadId: threadId,
-      type: "private", // This is a private thread between two students
-      participants: sortedParticipants,
-      messages: [],
-      createdAt: new Date(),
-      lastMessageTimestamp: new Date(), // Initialize with current time
-    };
-
-    await client
-      .db("TrinityCapital")
-      .collection("threads")
-      .insertOne(newThread);
-
-    // Emit a socket event to both participants to notify them of the new thread
-    const participant1Socket = userSockets.get(sortedParticipants[0]);
-    const participant2Socket = userSockets.get(sortedParticipants[1]);
-
-    if (participant1Socket) {
-      participant1Socket.emit("newThreadCreated", newThread);
-      console.log(`Emitted newThreadCreated to ${sortedParticipants[0]}`);
-    }
-    if (participant2Socket) {
-      participant2Socket.emit("newThreadCreated", newThread);
-      console.log(`Emitted newThreadCreated to ${sortedParticipants[1]}`);
-    }
-
-    res.status(201).json({
-      message: "New thread created successfully.",
-      threadId: newThread.threadId,
-    });
-  } catch (error) {
-    console.error("Error creating new thread:", error);
-    res
-      .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
-  }
-});
-
-app.post("/studentInfo", async (req, res) => {
+app.post('/studentInfo', async (req, res) => {
   const { parcel } = req.body;
   const studentName = parcel[0];
   const teacherName = parcel[1];
@@ -1811,33 +1695,33 @@ app.post("/studentInfo", async (req, res) => {
 
   try {
     let student = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .findOne({ memberName: studentName, teacher: teacherName });
 
     if (student) {
       res.json(student);
     } else {
-      res.status(404).send("Student not found");
+      res.status(404).send('Student not found');
     }
 
     console.log(student);
   } catch (error) {
-    console.error("Error fetching student info:", error);
-    res.status(500).send("Internal Server Error");
+    console.error('Error fetching student info:', error);
+    res.status(500).send('Internal Server Error');
   }
 });
 
-app.post("/classMessage", async (req, res) => {
+app.post('/classMessage', async (req, res) => {
   const { teacherName, message } = req.body;
   if (!teacherName || !message) {
-    return res.status(400).json({ error: "Missing teacherName or message" });
+    return res.status(400).json({ error: 'Missing teacherName or message' });
   }
 
   // Find all students with this teacher
   const students = await client
-    .db("TrinityCapital")
-    .collection("User Profiles")
+    .db('TrinityCapital')
+    .collection('User Profiles')
     .find({ teacher: teacherName })
     .toArray();
 
@@ -1845,17 +1729,17 @@ app.post("/classMessage", async (req, res) => {
   const dialogHtml = `<dialog open class="baseModal"><h1>Message from ${teacherName}</h1><p>${message}</p><button onclick="this.parentElement.close()">Close</button></dialog>`;
 
   // Broadcast to all connected students
-  students.forEach((student) => {
+  students.forEach(student => {
     const userSocket = userSockets.get(student.memberName);
     if (userSocket) {
-      userSocket.emit("classMessage", dialogHtml);
+      userSocket.emit('classMessage', dialogHtml);
     }
   });
 
   res.status(200).json({ success: true });
 });
 
-app.post("/generateClassCodes", async (req, res) => {
+app.post('/generateClassCodes', async (req, res) => {
   try {
     const [teacherUsername, teacherEmail, periods] = req.body.parcel || [];
     if (
@@ -1865,32 +1749,30 @@ app.post("/generateClassCodes", async (req, res) => {
       periods.length === 0
     ) {
       return res.status(400).json({
-        error: `Missing teacherUsername, teacherEmail, or periods. Received: teacherUsername=${teacherUsername}, teacherEmail=${teacherEmail}, periods=${JSON.stringify(
-          periods
-        )}`,
+        error: `Missing teacherUsername, teacherEmail, or periods. Received: teacherUsername=${teacherUsername}, teacherEmail=${teacherEmail}, periods=${JSON.stringify(periods)}`,
       });
     }
 
-    console.log("Searching for teacherUsername:", teacherUsername);
+    console.log('Searching for teacherUsername:', teacherUsername);
     // 1. Get teacher's state, school, and license number from Teachers collection
     const teacher = await client
-      .db("TrinityCapital")
-      .collection("Teachers")
+      .db('TrinityCapital')
+      .collection('Teachers')
       .findOne({ username: teacherUsername });
-    console.log("Teacher lookup result:", teacher);
+    console.log('Teacher lookup result:', teacher);
 
     if (!teacher) {
-      return res.status(404).json({ error: "Teacher not found" });
+      return res.status(404).json({ error: 'Teacher not found' });
     }
 
     // Get the access code from Access Codes collection using teacherEmail
     const accessCodeDoc = await client
-      .db("TrinityCapital")
-      .collection("Access Codes")
+      .db('TrinityCapital')
+      .collection('Access Codes')
       .findOne({ sent_to: teacherEmail });
-    console.log("Access code lookup result:", accessCodeDoc);
+    console.log('Access code lookup result:', accessCodeDoc);
 
-    let licenseNumber = "00000000";
+    let licenseNumber = '00000000';
     if (accessCodeDoc && accessCodeDoc.code) {
       // Use a shortened version (first 8 chars, uppercase) for display
       licenseNumber = accessCodeDoc.code.substring(0, 8).toUpperCase();
@@ -1899,38 +1781,38 @@ app.post("/generateClassCodes", async (req, res) => {
     // Generate school shorthand from school name
     function getSchoolShortHand(schoolName) {
       return schoolName
-        .split(" ")
-        .map((word) => word[0].toUpperCase())
-        .join("");
+        .split(' ')
+        .map(word => word[0].toUpperCase())
+        .join('');
     }
-    const state = teacher.state || "US";
-    const schoolShortHand = getSchoolShortHand(teacher.school || "HSSCHOOL");
+    const state = teacher.state || 'US';
+    const schoolShortHand = getSchoolShortHand(teacher.school || 'HSSCHOOL');
 
     // 2. Assign class periods to teacher profile
     await client
-      .db("TrinityCapital")
-      .collection("Teachers")
+      .db('TrinityCapital')
+      .collection('Teachers')
       .updateOne(
         { Username: teacherUsername },
-        { $set: { classPeriods: periods } }
+        { $set: { classPeriods: periods } },
       );
 
     // 3. Generate codes for each period
-    const codes = periods.map((period) => {
+    const codes = periods.map(period => {
       return `${state}-${schoolShortHand}-${licenseNumber}-${period}`;
     });
 
     // Save each class code in the Access Codes collection with type 'student'
     const accessCodesCollection = client
-      .db("TrinityCapital")
-      .collection("Access Codes");
+      .db('TrinityCapital')
+      .collection('Access Codes');
     for (let i = 0; i < codes.length; i++) {
       await accessCodesCollection.insertOne({
         code: codes[i],
         teacherUsername,
         teacherEmail,
         period: periods[i],
-        type: "student",
+        type: 'student',
         createdAt: new Date(),
       });
     }
@@ -1939,77 +1821,77 @@ app.post("/generateClassCodes", async (req, res) => {
 
     res.status(200).json({ codes, emailSent: true });
   } catch (err) {
-    console.error("Error in /generateClassCodes:", err);
+    console.error('Error in /generateClassCodes:', err);
     res
       .status(500)
-      .json({ error: "Internal Server Error", details: err.message });
+      .json({ error: 'Internal Server Error', details: err.message });
   }
 });
 
-app.post("/teacherDashboard", async (req, res) => {
+app.post('/teacherDashboard', async (req, res) => {
   try {
     const { teacherUsername } = req.body;
-    console.log("Received /teacherDashboard request for:", teacherUsername);
+    console.log('Received /teacherDashboard request for:', teacherUsername);
     if (!teacherUsername) {
-      console.log("Missing teacherUsername in request body");
-      return res.status(400).json({ error: "Missing teacherUsername" });
+      console.log('Missing teacherUsername in request body');
+      return res.status(400).json({ error: 'Missing teacherUsername' });
     }
 
     // Find the teacher by username to get their actual name
     const teacherDoc = await client
-      .db("TrinityCapital")
-      .collection("Teachers")
+      .db('TrinityCapital')
+      .collection('Teachers')
       .findOne({ username: teacherUsername });
     if (!teacherDoc) {
-      console.log("No teacher found for username:", teacherUsername);
-      return res.status(404).json({ error: "Teacher not found" });
+      console.log('No teacher found for username:', teacherUsername);
+      return res.status(404).json({ error: 'Teacher not found' });
     }
     const teacherName = teacherDoc.name;
-    console.log("Resolved teacher name:", teacherName);
+    console.log('Resolved teacher name:', teacherName);
 
     // Find all students assigned to this teacher by name
     const students = await client
-      .db("TrinityCapital")
-      .collection("User Profiles")
+      .db('TrinityCapital')
+      .collection('User Profiles')
       .find({ teacher: teacherName })
       .toArray();
 
     // Prepare student data for dashboard
-    const studentData = students.map((student) => ({
+    const studentData = students.map(student => ({
       memberName: student.memberName,
       checkingBalance: student.checkingAccount?.balanceTotal ?? 0,
       savingsBalance: student.savingsAccount?.balanceTotal ?? 0,
       grade: student.grade ?? 0,
       lessonsCompleted: student.lessonsCompleted ?? 0,
-      classPeriod: student.classPeriod ?? "",
+      classPeriod: student.classPeriod ?? '',
     }));
 
-    console.log("Sending student data to frontend:", studentData);
+    console.log('Sending student data to frontend:', studentData);
     res.status(200).json({ students: studentData });
   } catch (error) {
-    console.error("Error in /teacherDashboard:", error);
+    console.error('Error in /teacherDashboard:', error);
     res
       .status(500)
-      .json({ error: "Internal Server Error", details: error.message });
+      .json({ error: 'Internal Server Error', details: error.message });
   }
 });
 
 // --- EMAIL SENDING ENDPOINT (Gmail API, not SMTP) ---
-app.post("/sendEmail", async (req, res) => {
+app.post('/sendEmail', async (req, res) => {
   try {
     const { sender, recipients, subject, message } = req.body;
     // Look up teacher's OAuth2 credentials
     const teacherDoc = await client
-      .db("TrinityCapital")
-      .collection("Teachers")
+      .db('TrinityCapital')
+      .collection('Teachers')
       .findOne({ username: sender });
-    console.log("SEND EMAIL DEBUG:");
-    console.log("  sender (username):", sender);
+    console.log('SEND EMAIL DEBUG:');
+    console.log('  sender (username):', sender);
     if (teacherDoc) {
-      console.log("  teacherDoc.username:", teacherDoc.username);
-      console.log("  teacherDoc.oauth:", teacherDoc.oauth);
+      console.log('  teacherDoc.username:', teacherDoc.username);
+      console.log('  teacherDoc.oauth:', teacherDoc.oauth);
     } else {
-      console.log("  teacherDoc not found for username:", sender);
+      console.log('  teacherDoc not found for username:', sender);
     }
     if (
       !teacherDoc ||
@@ -2019,7 +1901,7 @@ app.post("/sendEmail", async (req, res) => {
     ) {
       return res
         .status(400)
-        .json({ error: "No OAuth2 credentials found for teacher" });
+        .json({ error: 'No OAuth2 credentials found for teacher' });
     }
     const teacherEmail = teacherDoc.oauth.email;
     const refreshToken = teacherDoc.oauth.refresh_token;
@@ -2033,27 +1915,27 @@ app.post("/sendEmail", async (req, res) => {
         refreshToken,
         recipients,
         finalSubject,
-        message
+        message,
       );
       res.status(200).json({ success: true });
     } catch (error) {
-      const errMsg = error && error.message ? error.message : "";
+      const errMsg = error && error.message ? error.message : '';
       if (
-        errMsg.includes("invalid_grant") ||
-        errMsg.includes("Invalid Credentials")
+        errMsg.includes('invalid_grant') ||
+        errMsg.includes('Invalid Credentials')
       ) {
-        return res.status(401).json({ error: "oauth_reauth_required" });
+        return res.status(401).json({ error: 'oauth_reauth_required' });
       }
       res.status(500).json({
         success: false,
-        error: "Failed to send email",
+        error: 'Failed to send email',
         details: errMsg,
       });
     }
   } catch (err) {
     res.status(500).json({
       success: false,
-      error: "Internal server error",
+      error: 'Internal server error',
       details: err.message,
     });
   }
@@ -2065,54 +1947,54 @@ async function sendEmailViaGmailApi(
   refreshToken,
   to,
   subject,
-  body
+  body,
 ) {
-  const { google } = require("googleapis");
+  const { google } = require('googleapis');
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    process.env.OAUTH2_REDIRECT_URI
+    process.env.OAUTH2_REDIRECT_URI,
   );
   oAuth2Client.setCredentials({ refresh_token: refreshToken });
-  const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
+  const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
   // Build RFC822 message
   const messageParts = [
     `From: "Teacher" <${teacherEmail}>`,
     `To: ${to}`,
     `Subject: ${subject}`,
-    "Content-Type: text/plain; charset=utf-8",
-    "",
+    'Content-Type: text/plain; charset=utf-8',
+    '',
     body,
   ];
-  const rawMessage = Buffer.from(messageParts.join("\r\n"))
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  const rawMessage = Buffer.from(messageParts.join('\r\n'))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
   try {
     await gmail.users.messages.send({
-      userId: "me",
+      userId: 'me',
       requestBody: {
         raw: rawMessage,
       },
     });
   } catch (error) {
-    console.error("Gmail API send error:", error);
+    console.error('Gmail API send error:', error);
     throw new Error(
       error?.response?.data?.error?.message ||
         error.message ||
-        "Failed to send email via Gmail API"
+        'Failed to send email via Gmail API',
     );
   }
 }
 
 // --- EMAIL SETTINGS FETCH ENDPOINT ---
-app.get("/emailSettings/:teacherUsername", async (req, res) => {
+app.get('/emailSettings/:teacherUsername', async (req, res) => {
   const { teacherUsername } = req.params;
   try {
     const doc = await client
-      .db("TrinityCapital")
-      .collection("EmailSettings")
+      .db('TrinityCapital')
+      .collection('EmailSettings')
       .findOne({ teacherUsername });
     if (doc) {
       res.status(200).json(doc);
@@ -2125,65 +2007,65 @@ app.get("/emailSettings/:teacherUsername", async (req, res) => {
         groups: [],
       };
       await client
-        .db("TrinityCapital")
-        .collection("EmailSettings")
+        .db('TrinityCapital')
+        .collection('EmailSettings')
         .insertOne(emptyDoc);
       res.status(200).json(emptyDoc);
     }
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch email settings" });
+    res.status(500).json({ error: 'Failed to fetch email settings' });
   }
 });
 
 // --- EMAIL MODAL FEATURE ENDPOINTS ---
-app.post("/saveEmailAddress", async (req, res) => {
+app.post('/saveEmailAddress', async (req, res) => {
   const { sender, address } = req.body;
   try {
     await client
-      .db("TrinityCapital")
-      .collection("EmailSettings")
+      .db('TrinityCapital')
+      .collection('EmailSettings')
       .updateOne(
         { teacherUsername: sender },
         { $addToSet: { addresses: address } },
-        { upsert: true }
+        { upsert: true },
       );
     res.status(200).json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: "Failed to save address" });
+    res.status(500).json({ error: 'Failed to save address' });
   }
 });
 
-app.post("/saveEmailTemplate", async (req, res) => {
+app.post('/saveEmailTemplate', async (req, res) => {
   const { sender, subject, message } = req.body;
   try {
     await client
-      .db("TrinityCapital")
-      .collection("EmailSettings")
+      .db('TrinityCapital')
+      .collection('EmailSettings')
       .updateOne(
         { teacherUsername: sender },
         { $addToSet: { templates: { subject, message } } },
-        { upsert: true }
+        { upsert: true },
       );
     res.status(200).json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: "Failed to save template" });
+    res.status(500).json({ error: 'Failed to save template' });
   }
 });
 
-app.post("/saveEmailGroup", async (req, res) => {
+app.post('/saveEmailGroup', async (req, res) => {
   const { sender, name, addresses } = req.body;
   try {
     await client
-      .db("TrinityCapital")
-      .collection("EmailSettings")
+      .db('TrinityCapital')
+      .collection('EmailSettings')
       .updateOne(
         { teacherUsername: sender },
         { $addToSet: { groups: { name, addresses } } },
-        { upsert: true }
+        { upsert: true },
       );
     res.status(200).json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: "Failed to save group" });
+    res.status(500).json({ error: 'Failed to save group' });
   }
 });
 
