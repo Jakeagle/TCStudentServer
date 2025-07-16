@@ -376,7 +376,7 @@ externalSocket.on('disconnect', () => {
 
 /*****************************************MongoDB***************************************************/
 
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(mongoUri, {
@@ -1519,6 +1519,211 @@ app.post('/lessonArrays', async (req, res) => {
   } catch (error) {
     console.error('Error in /lessonArrays:', error);
     res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// Replace lesson in unit endpoint
+app.post('/replaceLessonInUnit', async (req, res) => {
+  try {
+    const { teacherName, unitValue, oldLessonId, newLessonId } = req.body;
+
+    // Debug logging
+    console.log('Replace lesson request received:');
+    console.log('teacherName:', teacherName);
+    console.log('unitValue:', unitValue, 'type:', typeof unitValue);
+    console.log('oldLessonId:', oldLessonId, 'type:', typeof oldLessonId);
+    console.log('newLessonId:', newLessonId, 'type:', typeof newLessonId);
+
+    if (!teacherName || !unitValue || !oldLessonId || !newLessonId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Missing required parameters: teacherName, unitValue, oldLessonId, newLessonId',
+      });
+    }
+
+    // Function to validate ObjectId
+    function isValidObjectId(id) {
+      return ObjectId.isValid(id) && String(new ObjectId(id)) === id;
+    }
+
+    // Validate new lesson ObjectId
+    if (!isValidObjectId(newLessonId)) {
+      console.log('Invalid newLessonId format:', newLessonId);
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid newLessonId format',
+      });
+    }
+
+    // Get the old lesson details from the Lessons collection to find the title
+    const oldLesson = await client
+      .db('TrinityCapital')
+      .collection('Lessons')
+      .findOne({ _id: new ObjectId(oldLessonId) });
+
+    if (!oldLesson) {
+      return res.status(404).json({
+        success: false,
+        message: 'Old lesson not found',
+      });
+    }
+
+    // Get the new lesson details from the Lessons collection
+    const newLesson = await client
+      .db('TrinityCapital')
+      .collection('Lessons')
+      .findOne({ _id: new ObjectId(newLessonId) });
+
+    if (!newLesson) {
+      return res.status(404).json({
+        success: false,
+        message: 'New lesson not found',
+      });
+    }
+
+    // Update the lesson in the teacher's document using lesson title for matching
+    const updateResult = await client
+      .db('TrinityCapital')
+      .collection('Teachers')
+      .updateOne(
+        {
+          name: teacherName,
+          'units.value': unitValue,
+          'units.lessons.lesson_title': oldLesson.lesson.lesson_title,
+        },
+        {
+          $set: {
+            'units.$[unit].lessons.$[lesson]': {
+              lesson_title: newLesson.lesson.lesson_title,
+              intro_text_blocks: newLesson.lesson.intro_text_blocks,
+              conditions: newLesson.lesson.conditions,
+            },
+          },
+        },
+        {
+          arrayFilters: [
+            { 'unit.value': unitValue },
+            { 'lesson.lesson_title': oldLesson.lesson.lesson_title },
+          ],
+        },
+      );
+
+    if (updateResult.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Teacher, unit, or lesson not found for replacement',
+      });
+    }
+
+    console.log(
+      `Lesson replaced successfully: ${oldLesson.lesson.lesson_title} -> ${newLesson.lesson.lesson_title} in unit ${unitValue} for teacher ${teacherName}`,
+    );
+
+    // --- Emit Socket.IO event to update lesson management modal ---
+    io.emit('lessonReplaced', {
+      teacherName: teacherName,
+      unitValue: unitValue,
+      oldLesson: {
+        _id: oldLessonId,
+        lesson_title: oldLesson.lesson.lesson_title,
+      },
+      newLesson: {
+        _id: newLessonId,
+        lesson_title: newLesson.lesson.lesson_title,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Lesson replaced successfully',
+      replacedLesson: {
+        _id: newLessonId,
+        lesson_title: newLesson.lesson.lesson_title,
+      },
+    });
+  } catch (error) {
+    console.error('Error replacing lesson in unit:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message,
+    });
+  }
+});
+
+// Save unit changes endpoint
+app.post('/saveUnitChanges', async (req, res) => {
+  try {
+    const { teacherName, unitValue, lessons } = req.body;
+
+    // Debug logging
+    console.log('Save unit changes request received:');
+    console.log('teacherName:', teacherName);
+    console.log('unitValue:', unitValue);
+    console.log('lessons:', lessons);
+
+    if (!teacherName || !unitValue || !Array.isArray(lessons)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameters: teacherName, unitValue, lessons',
+      });
+    }
+
+    // Update the unit's lessons in the teacher's document
+    const updateResult = await client
+      .db('TrinityCapital')
+      .collection('Teachers')
+      .updateOne(
+        {
+          name: teacherName,
+          'units.value': unitValue,
+        },
+        {
+          $set: {
+            'units.$.lessons': lessons,
+          },
+        },
+      );
+
+    if (updateResult.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'Teacher or unit not found',
+      });
+    }
+
+    if (updateResult.modifiedCount === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'No changes were made to the unit',
+      });
+    }
+
+    console.log(
+      `Unit ${unitValue} updated successfully for teacher ${teacherName} with ${lessons.length} lessons`,
+    );
+
+    // --- Emit Socket.IO event to update lesson management modal ---
+    io.emit('unitSaved', {
+      teacherName: teacherName,
+      unitValue: unitValue,
+      lessons: lessons,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Unit changes saved successfully',
+      unitValue: unitValue,
+      lessonsCount: lessons.length,
+    });
+  } catch (error) {
+    console.error('Error saving unit changes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message,
+    });
   }
 });
 
