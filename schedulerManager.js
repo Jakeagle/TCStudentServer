@@ -1,10 +1,12 @@
 /**
  * Persistent Scheduler Manager for Bills and Payments
  * Handles scheduling with database persistence to survive server restarts
+ * Includes catch-up mechanism for missed transactions during server downtime
  */
 
 const cron = require('node-cron');
 const { ObjectId } = require('mongodb');
+const CatchupScheduler = require('./catchupScheduler');
 
 class SchedulerManager {
   constructor(mongoClient, io, userSockets) {
@@ -12,6 +14,7 @@ class SchedulerManager {
     this.io = io;
     this.userSockets = userSockets;
     this.scheduledJobs = new Map(); // Track active cron jobs
+    this.catchupScheduler = new CatchupScheduler(mongoClient, io);
   }
 
   /**
@@ -211,12 +214,27 @@ class SchedulerManager {
   }
 
   /**
-   * Initialize scheduler on server startup
+   * Initialize scheduler on server startup with catch-up mechanism
    */
   async initializeScheduler() {
     try {
-      console.log('Initializing persistent scheduler...');
+      console.log(
+        '🚀 Initializing persistent scheduler with catch-up mechanism...',
+      );
 
+      // STEP 1: Perform catch-up check for missed transactions
+      console.log('🔄 Performing catch-up check for missed transactions...');
+      const catchupResult = await this.catchupScheduler.performCatchupCheck();
+
+      if (catchupResult.success) {
+        console.log(
+          `✅ Catch-up complete: ${catchupResult.totalProcessed} transactions processed`,
+        );
+      } else {
+        console.error('❌ Catch-up failed:', catchupResult.error);
+      }
+
+      // STEP 2: Initialize regular scheduler
       const profiles = await this.client
         .db('TrinityCapital')
         .collection('User Profiles')
@@ -245,8 +263,11 @@ class SchedulerManager {
       }
 
       console.log(
-        `Scheduler initialized with ${this.scheduledJobs.size} scheduled transactions`,
+        `📅 Scheduler initialized with ${this.scheduledJobs.size} scheduled transactions`,
       );
+
+      // Setup graceful shutdown handler
+      this.setupShutdownHandler();
     } catch (error) {
       console.error('Error initializing scheduler:', error);
     }
@@ -466,6 +487,53 @@ class SchedulerManager {
     }
 
     return status;
+  }
+
+  /**
+   * Setup graceful shutdown handler to record shutdown time
+   */
+  setupShutdownHandler() {
+    const gracefulShutdown = async signal => {
+      console.log(
+        `📝 Received ${signal}. Recording shutdown time for catch-up...`,
+      );
+
+      try {
+        await this.catchupScheduler.recordServerShutdown();
+        console.log('✅ Shutdown time recorded successfully');
+      } catch (error) {
+        console.error('❌ Failed to record shutdown time:', error);
+      }
+
+      // Stop all scheduled jobs
+      for (const [jobKey, job] of this.scheduledJobs.entries()) {
+        job.stop();
+        console.log(`🛑 Stopped job: ${jobKey}`);
+      }
+
+      console.log('🔄 Scheduler shutdown complete');
+      process.exit(0);
+    };
+
+    // Handle different shutdown signals
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+    process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // For nodemon
+  }
+
+  /**
+   * Get catch-up statistics for monitoring
+   */
+  async getCatchupStats(days = 7) {
+    return await this.catchupScheduler.getCatchupStats(days);
+  }
+
+  /**
+   * Manually trigger catch-up check (for testing or admin purposes)
+   */
+  async manualCatchupCheck() {
+    console.log('🔧 Manual catch-up check triggered...');
+    return await this.catchupScheduler.performCatchupCheck();
   }
 }
 
