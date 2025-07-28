@@ -1,4 +1,5 @@
 require('dotenv').config();
+// Restart trigger
 
 const express = require('express');
 const app = express();
@@ -1033,6 +1034,48 @@ app.get('/scheduler/user/:memberName', async (req, res) => {
     res
       .status(500)
       .json({ error: 'Internal Server Error', details: error.message });
+  }
+});
+
+// Get catch-up statistics
+app.get('/scheduler/catchup-stats', async (req, res) => {
+  try {
+    const days = parseInt(req.query.days) || 7;
+    const stats = await schedulerManager.getCatchupStats(days);
+
+    res.json({
+      success: true,
+      days: days,
+      stats: stats,
+    });
+  } catch (error) {
+    console.error('Error getting catch-up stats:', error);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      details: error.message,
+    });
+  }
+});
+
+// Manual catch-up check (for admin/testing purposes)
+app.post('/scheduler/manual-catchup', async (req, res) => {
+  try {
+    console.log('🔧 Manual catch-up check requested...');
+    const result = await schedulerManager.manualCatchupCheck();
+
+    res.json({
+      success: result.success,
+      message: result.success
+        ? `Catch-up complete: ${result.totalProcessed} transactions processed`
+        : `Catch-up failed: ${result.error}`,
+      details: result,
+    });
+  } catch (error) {
+    console.error('Error performing manual catch-up:', error);
+    res.status(500).json({
+      error: 'Internal Server Error',
+      details: error.message,
+    });
   }
 });
 
