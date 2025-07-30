@@ -1522,6 +1522,146 @@ app.post('/lessonArrays', async (req, res) => {
   }
 });
 
+// Get lessons created by admin@trinity-capital.net for testing
+app.get('/admin-lessons', async (req, res) => {
+  try {
+    const lessons = await client
+      .db('TrinityCapital')
+      .collection('Lessons')
+      .find({
+        $or: [
+          { creator_email: 'admin@trinity-capital.net' },
+          { creator_username: 'adminTC' },
+        ],
+      })
+      .limit(10) // Limit to 10 lessons for testing
+      .toArray();
+
+    console.log(
+      `Found ${lessons.length} lessons created by admin@trinity-capital.net`,
+    );
+
+    res.json({
+      success: true,
+      lessons: lessons,
+      count: lessons.length,
+    });
+  } catch (error) {
+    console.error('Error fetching admin lessons:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch admin lessons',
+      message: error.message,
+    });
+  }
+});
+
+// Handle lesson completion and update student profile
+app.post('/lesson-completion', async (req, res) => {
+  try {
+    const {
+      studentName,
+      lessonId,
+      lessonTitle,
+      score,
+      grade,
+      completionDate,
+      duration,
+      autoCompleted,
+      difficultyLevel,
+      conditionsBreakdown,
+      totalConditions,
+      completedConditions,
+    } = req.body;
+
+    console.log(
+      `Processing lesson completion for ${studentName}: ${lessonTitle} (${score}% - ${grade})`,
+    );
+
+    // Find and update the student's profile
+    const userProfilesCollection = client
+      .db('TrinityCapital')
+      .collection('User Profiles');
+
+    // Create the lesson completion record
+    const lessonCompletion = {
+      lessonId,
+      lessonTitle,
+      score,
+      grade,
+      completionDate: new Date(completionDate),
+      duration,
+      autoCompleted,
+      difficultyLevel,
+      conditionsBreakdown,
+      totalConditions,
+      completedConditions,
+    };
+
+    // Update student profile with lesson completion
+    const updateResult = await userProfilesCollection.updateOne(
+      { memberName: studentName },
+      {
+        $push: {
+          completedLessons: lessonCompletion,
+        },
+        $inc: {
+          totalLessonsCompleted: 1,
+          totalScore: score,
+        },
+        $set: {
+          lastLessonCompleted: new Date(completionDate),
+          lastActivity: new Date(),
+        },
+      },
+    );
+
+    if (updateResult.matchedCount === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Student profile not found',
+        message: `No profile found for student: ${studentName}`,
+      });
+    }
+
+    // Calculate and update average score
+    const studentProfile = await userProfilesCollection.findOne({
+      memberName: studentName,
+    });
+    if (studentProfile && studentProfile.totalLessonsCompleted > 0) {
+      const averageScore =
+        studentProfile.totalScore / studentProfile.totalLessonsCompleted;
+      await userProfilesCollection.updateOne(
+        { memberName: studentName },
+        { $set: { averageScore: Math.round(averageScore * 100) / 100 } },
+      );
+    }
+
+    console.log(
+      `Successfully updated ${studentName}'s profile with lesson completion`,
+    );
+
+    res.json({
+      success: true,
+      message: 'Lesson completion saved successfully',
+      data: {
+        studentName,
+        lessonTitle,
+        score,
+        grade,
+        totalLessonsCompleted: studentProfile?.totalLessonsCompleted + 1 || 1,
+      },
+    });
+  } catch (error) {
+    console.error('Error saving lesson completion:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to save lesson completion',
+      message: error.message,
+    });
+  }
+});
+
 // Replace lesson in unit endpoint
 app.post('/replaceLessonInUnit', async (req, res) => {
   try {
