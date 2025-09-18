@@ -1495,6 +1495,9 @@ if (process.env.FEEDBACK_EMAIL_USER && process.env.FEEDBACK_EMAIL_PASS) {
   // For Gmail, you'll need to generate an "App Password".
   feedbackTransporter = nodemailer.createTransport({
     service: 'gmail',
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false, // Use 'false' for port 587, it will upgrade to TLS via STARTTLS
     auth: {
       user: process.env.FEEDBACK_EMAIL_USER, // Your sending email address from .env
       pass: process.env.FEEDBACK_EMAIL_PASS, // Your email app password from .env
