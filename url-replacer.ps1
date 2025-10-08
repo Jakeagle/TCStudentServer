@@ -21,6 +21,7 @@ $filesToProcess = @(
     "Frontend\Javascript\lessonEngine.js",
     "Frontend\Javascript\lessonRenderer.js",
      "Frontend\Javascript\billsAndPayments.js",
+     ".\Frontend\Javascript\feedback.js",
     "server.js"
 )
 
