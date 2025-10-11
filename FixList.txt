@@ -1,4 +1,0 @@
-1: Fix license countdown
-2: Implement Microsoft OAuth for Outlook and microsoft emails
-3: Fix bills and payments scheduling
-4: Fix account number generation and display
