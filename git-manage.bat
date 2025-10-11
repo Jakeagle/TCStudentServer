@@ -20,6 +20,7 @@ if "%1"=="pull" goto :pull_both
 if "%1"=="setup" goto :setup
 if "%1"=="deploy" goto :deploy_production
 if "%1"=="local" goto :revert_to_local
+if "%1"=="clean" goto :clean_server
 goto :usage
 
 :show_status
@@ -44,7 +45,7 @@ copy "server.gitignore" ".gitignore" >nul
 
 REM Add server files (excluding Frontend)
 git add .
-git add server.js package.json package-lock.json public/
+git add server.js schedulerManager.js catchupScheduler.js package.json package-lock.json public/
 git add *.js *.md *.json *.html
 
 REM Remove Frontend from staging if it was added
@@ -165,6 +166,52 @@ goto :end
 echo 🔄 Reverting to localhost URLs for local development...
 powershell -ExecutionPolicy Bypass -File "url-replacer.ps1" -Mode "local"
 echo ✅ Localhost URLs restored for local development
+goto :end
+
+:clean_server
+echo 🧹 Cleaning unauthorized files from server repository...
+echo ⚠️ This will remove unauthorized files from the server repository only.
+echo ❗ Your local files will not be affected.
+set /p "confirm=Are you sure you want to proceed? (Y/N): "
+if /i "%confirm%" neq "Y" goto :end
+
+REM Create a temporary directory for the clean operation
+echo 📁 Creating temporary workspace...
+set "temp_dir=temp_server_clean_%RANDOM%"
+mkdir %temp_dir%
+cd %temp_dir%
+
+REM Clone only the server repository
+echo 🔄 Cloning server repository...
+git clone https://github.com/Jakeagle/TCStudentServer.git .
+
+REM Remove everything except .git
+echo 🗑️ Removing all files from server repository...
+for /d %%d in (*) do if "%%d" neq ".git" rd /s /q "%%d"
+for %%f in (*) do del "%%f"
+
+REM Copy only authorized files from parent directory
+echo 📋 Copying authorized files...
+copy ..\server.js .
+copy ..\schedulerManager.js .
+copy ..\catchupScheduler.js .
+copy ..\package.json .
+copy ..\package-lock.json .
+copy ..\server.gitignore .
+xcopy /E /I ..\public public
+
+REM Commit and push changes
+echo 📤 Committing changes...
+git add -A
+git commit -m "CLEANUP: Remove unauthorized files from server repository"
+git push origin master
+
+REM Clean up
+echo 🧹 Cleaning up temporary files...
+cd ..
+rd /s /q %temp_dir%
+
+echo ✅ Server repository cleaned - only authorized files remain
 goto :end
 
 :end
