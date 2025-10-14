@@ -21,6 +21,7 @@ if "%1"=="setup" goto :setup
 if "%1"=="deploy" goto :deploy_production
 if "%1"=="local" goto :revert_to_local
 if "%1"=="clean" goto :clean_server
+if "%1"=="startup" goto :startup_local
 goto :usage
 
 :show_status
@@ -43,12 +44,27 @@ if exist ".gitignore" copy ".gitignore" ".gitignore.backup" >nul
 REM Use server-specific .gitignore
 copy "server.gitignore" ".gitignore" >nul
 
+REM Backup Frontend directory
+if exist "Frontend" (
+    echo 📦 Backing up Frontend directory...
+    if not exist "frontend_backup" mkdir frontend_backup
+    xcopy /E /I /Y Frontend frontend_backup > nul
+)
+
 REM Add server files (excluding Frontend)
 git add .
 git add server.js schedulerManager.js catchupScheduler.js package.json package-lock.json public/
 git add *.js *.md *.json *.html
 
 REM Remove Frontend from staging if it was added
+git reset HEAD Frontend/ 2>nul
+
+REM Restore Frontend if it was backed up
+if exist "frontend_backup" (
+    echo 🔄 Restoring Frontend directory...
+    xcopy /E /I /Y frontend_backup\Frontend Frontend > nul
+    rmdir /S /Q frontend_backup
+)
 git reset HEAD Frontend/ 2>nul
 
 set /p commit_message="📝 Enter commit message for server changes: "
@@ -130,12 +146,14 @@ echo   pull      - Pull from both repositories
 echo   setup     - Setup git remotes
 echo   deploy    - Replace localhost URLs with production URLs and deploy
 echo   local     - Revert production URLs back to localhost for development
+echo   startup   - Start local development environment (live-server and nodemon)
 echo.
 echo Examples:
 echo   %0 status
 echo   %0 server
 echo   %0 deploy
 echo   %0 local
+echo   %0 startup
 goto :end
 
 :deploy_production
@@ -211,7 +229,29 @@ echo 🧹 Cleaning up temporary files...
 cd ..
 rd /s /q %temp_dir%
 
+REM Restore Frontend if it exists in parent directory
+if exist "Frontend" (
+    echo 🔄 Restoring Frontend directory from parent...
+    xcopy /E /I /Y Frontend %temp_dir%\Frontend > nul
+)
+
 echo ✅ Server repository cleaned - only authorized files remain
+goto :end
+
+:startup_local
+echo 🚀 Starting local development environment...
+
+REM Start live-server in a new window
+echo 📡 Starting live-server...
+start cmd /k "npx live-server"
+
+REM Start nodemon in a new window
+echo 🔄 Starting nodemon server...
+start cmd /k "npx nodemon server.js"
+
+echo ✅ Local development environment is running!
+echo 🌐 Frontend: http://localhost:8080
+echo 🖥️ Backend: http://localhost:3000
 goto :end
 
 :end

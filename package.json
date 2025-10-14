@@ -7,7 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
     "migrate-scheduler": "node migrationScheduler.js",
-    "test-scheduler": "node testScheduler.js"
+    "test-scheduler": "node testScheduler.js",
+    "dev": "concurrently \"npx nodemon server.js\" \"npx live-server\"",
+    "server": "nodemon server.js",
+    "client": "live-server"
   },
   "author": "Ferguson Software Solutions, LLC",
   "license": "ISC",
@@ -26,5 +29,10 @@
     "socket.io": "^4.7.4",
     "socket.io-client": "^4.8.1",
     "stripe": "^17.5.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "live-server": "^1.2.2",
+    "nodemon": "^3.1.10"
   }
 }
