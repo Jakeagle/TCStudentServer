@@ -4771,6 +4771,7 @@ app.get("/classmates/:memberName", async (req, res) => {
     res.json({
       success: true,
       classmates: classmateNames,
+      teacher: studentProfile.teacher, // Include the teacher's name
     });
   } catch (error) {
     console.error("Error fetching classmates:", error);
