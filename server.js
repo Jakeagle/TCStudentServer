@@ -1,14 +1,15 @@
-require('dotenv').config();
+require("dotenv").config();
 // Restart trigger
 
-const express = require('express');
+const express = require("express");
 const app = express();
-const cron = require('node-cron');
-const { fork } = require('child_process');
-const crypto = require('crypto');
-const nodemailer = require('nodemailer');
-const { google } = require('googleapis');
-const SchedulerManager = require('./schedulerManager');
+const cron = require("node-cron");
+const { fork } = require("child_process");
+const crypto = require("crypto");
+const nodemailer = require("nodemailer");
+const { google } = require("googleapis");
+const SchedulerManager = require("./schedulerManager");
+const { setupGitHubWebhook } = require("./githubWebhookHandler");
 
 // Add fetch for Node.js versions that don't have it built-in
 let fetch;
@@ -18,20 +19,20 @@ try {
 } catch (error) {
   // Fallback to node-fetch for older Node.js versions
   try {
-    fetch = require('node-fetch');
+    fetch = require("node-fetch");
   } catch (fetchError) {
     console.warn(
-      'Fetch not available. Install node-fetch: npm install node-fetch',
+      "Fetch not available. Install node-fetch: npm install node-fetch",
     );
   }
 }
 
-const cors = require('cors');
-const bodyParser = require('body-parser');
+const cors = require("cors");
+const bodyParser = require("body-parser");
 let Profiles;
 
 const port = process.env.PORT || 3000;
-const allowedOrigins = process.env.ALLOWED_ORIGINS.split(',');
+const allowedOrigins = process.env.ALLOWED_ORIGINS.split(",");
 const mongoUri = process.env.MONGODB_URI;
 
 // All Stripe-related code (checkouts, webhooks, and references) removed as requested.
@@ -39,86 +40,86 @@ const mongoUri = process.env.MONGODB_URI;
 /*****************************************LICENSE MANAGEMENT***************************************************/
 
 // Get school licenses for admin dashboard
-app.get('/school-licenses/:admin_email', async (req, res) => {
+app.get("/school-licenses/:admin_email", async (req, res) => {
   try {
     const { admin_email } = req.params;
 
     const licenses = await client
-      .db('TrinityCapital')
-      .collection('School Licenses')
+      .db("TrinityCapital")
+      .collection("School Licenses")
       .find({ admin_email: admin_email, is_active: true })
       .toArray();
 
     res.json(licenses);
   } catch (error) {
-    console.error('Error fetching school licenses:', error);
+    console.error("Error fetching school licenses:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Get access codes for a school
-app.get('/access-codes/:school_name', async (req, res) => {
+app.get("/access-codes/:school_name", async (req, res) => {
   try {
     const { school_name } = req.params;
 
     const codes = await client
-      .db('TrinityCapital')
-      .collection('Access Codes')
+      .db("TrinityCapital")
+      .collection("Access Codes")
       .find({ school: school_name })
       .toArray();
 
     res.json(codes);
   } catch (error) {
-    console.error('Error fetching access codes:', error);
+    console.error("Error fetching access codes:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Validate license capacity before account creation
-app.post('/validate-license-capacity', async (req, res) => {
+app.post("/validate-license-capacity", async (req, res) => {
   try {
     const { access_code } = req.body;
 
     // Find the access code
     const code = await client
-      .db('TrinityCapital')
-      .collection('Access Codes')
+      .db("TrinityCapital")
+      .collection("Access Codes")
       .findOne({ code: access_code });
 
     if (!code) {
-      return res.status(404).json({ error: 'Invalid access code' });
+      return res.status(404).json({ error: "Invalid access code" });
     }
 
     if (code.used) {
-      return res.status(400).json({ error: 'Access code already used' });
+      return res.status(400).json({ error: "Access code already used" });
     }
 
     if (new Date() > new Date(code.expires_at)) {
-      return res.status(400).json({ error: 'Access code expired' });
+      return res.status(400).json({ error: "Access code expired" });
     }
 
     // Check license capacity
     const license = await client
-      .db('TrinityCapital')
-      .collection('School Licenses')
+      .db("TrinityCapital")
+      .collection("School Licenses")
       .findOne({ school_name: code.school, is_active: true });
 
     if (!license) {
       return res
         .status(404)
-        .json({ error: 'No active license found for this school' });
+        .json({ error: "No active license found for this school" });
     }
 
     // Count current usage
     const currentUsers = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .countDocuments({ school: code.school });
 
     const totalLicenses = license.student_licenses + license.teacher_licenses;
 
     if (currentUsers >= totalLicenses) {
-      return res.status(400).json({ error: 'License capacity exceeded' });
+      return res.status(400).json({ error: "License capacity exceeded" });
     }
 
     res.json({
@@ -128,18 +129,18 @@ app.post('/validate-license-capacity', async (req, res) => {
       remaining_capacity: totalLicenses - currentUsers,
     });
   } catch (error) {
-    console.error('Error validating license capacity:', error);
+    console.error("Error validating license capacity:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
 /*****************************************Socket.io***************************************************/
 
-const server = require('http').createServer(app);
-const io = require('socket.io')(server, {
+const server = require("http").createServer(app);
+const io = require("socket.io")(server, {
   cors: {
-    origin: process.env.SOCKET_ORIGIN.split(','),
-    methods: ['GET', 'POST'],
+    origin: process.env.SOCKET_ORIGIN.split(","),
+    methods: ["GET", "POST"],
     credentials: true,
   },
 });
@@ -151,26 +152,26 @@ const userSockets = new Map();
 let schedulerManager;
 
 // Socket.IO connection handling
-io.on('connection', socket => {
-  console.log('User connected:', socket.id);
+io.on("connection", (socket) => {
+  console.log("User connected:", socket.id);
 
   // Handle user identification
-  socket.on('identify', userId => {
+  socket.on("identify", (userId) => {
     try {
-      console.log('User identified:', userId);
+      console.log("User identified:", userId);
       userSockets.set(userId, socket);
 
       // Acknowledge successful identification
-      socket.emit('identified', { success: true });
+      socket.emit("identified", { success: true });
     } catch (error) {
-      console.error('Error during user identification:', error);
-      socket.emit('error', { message: 'Failed to identify user' });
+      console.error("Error during user identification:", error);
+      socket.emit("error", { message: "Failed to identify user" });
     }
   });
 
   // Handle studentCreated event from remote client (e.g., localhost:5000)
-  socket.on('studentCreated', (data, callback) => {
-    console.log('Received studentCreated event from remote client:', data);
+  socket.on("studentCreated", (data, callback) => {
+    console.log("Received studentCreated event from remote client:", data);
     // Prepare student data with correct defaults and structure
     const studentData = {
       memberName: data.memberName,
@@ -178,14 +179,14 @@ io.on('connection', socket => {
       savingsBalance: data.savingsAccount?.balanceTotal ?? 0,
       grade: data.grade ?? 0,
       lessonsCompleted: data.lessonsCompleted ?? 0,
-      classPeriod: data.classPeriod ?? '',
+      classPeriod: data.classPeriod ?? "",
     };
-    io.emit('studentAdded', studentData);
-    if (typeof callback === 'function') {
-      console.log('Sending ack callback for studentCreated event');
+    io.emit("studentAdded", studentData);
+    if (typeof callback === "function") {
+      console.log("Sending ack callback for studentCreated event");
       callback({ success: true });
     } else {
-      console.warn('No callback function provided for studentCreated event');
+      console.warn("No callback function provided for studentCreated event");
     }
   });
 
@@ -195,76 +196,156 @@ io.on('connection', socket => {
    * =================================================================
    * This is the single entry point for all messages sent from any client.
    */
-  socket.on('sendMessage', async (data, callback) => {
-    const { senderId, recipientId, messageContent } = data;
+  socket.on("sendMessage", async (data, callback) => {
+    const { senderId, recipientId, messageContent, optimisticId } = data;
 
-    console.log('Received sendMessage event:', data);
+    console.log("Received sendMessage event:", data);
 
     if (!senderId || !recipientId || !messageContent) {
-      console.error('Invalid message data received:', data);
-      if (callback) callback({ success: false, error: 'Invalid data' });
+      console.error("Invalid message data received:", data);
+      if (callback) callback({ success: false, error: "Invalid data" });
+      return;
+    }
+
+    // Profanity check
+    console.log(`[Profanity Check] Starting for message: "${messageContent}"`);
+    try {
+      const response = await fetch(
+        `https://www.purgomalum.com/service/json?text=${encodeURIComponent(messageContent)}`,
+      );
+      if (response.ok) {
+        const filterData = await response.json();
+        console.log("[Profanity Check] API Response:", filterData);
+        if (filterData.result !== messageContent) {
+          console.log(
+            "[Profanity Check] Profanity detected. Blocking message.",
+          );
+          const userSocket = userSockets.get(senderId);
+          if (userSocket) {
+            userSocket.emit("profanity-detected", {
+              message: "Profanity is not allowed.",
+              optimisticId: optimisticId,
+            });
+          }
+          if (callback)
+            callback({ success: false, error: "Profanity is not allowed." });
+          return;
+        }
+        console.log("[Profanity Check] Message is clean.");
+      } else {
+        console.error(
+          "[Profanity Check] PurgoMalum service returned an error:",
+          response.status,
+        );
+        const userSocket = userSockets.get(senderId);
+        if (userSocket) {
+          userSocket.emit("profanity-detected", {
+            message: "Could not validate message. Please try again.",
+            optimisticId: optimisticId,
+          });
+        }
+        if (callback)
+          callback({ success: false, error: "Could not validate message." });
+        return;
+      }
+    } catch (error) {
+      console.error(
+        "[Profanity Check] Error calling PurgoMalum service:",
+        error,
+      );
+      const userSocket = userSockets.get(senderId);
+      if (userSocket) {
+        userSocket.emit("profanity-detected", {
+          message: "Could not send message. Please try again later.",
+          optimisticId: optimisticId,
+        });
+      }
+      if (callback)
+        callback({ success: false, error: "Could not send message." });
       return;
     }
 
     const timestamp = new Date();
     // Check if it's a class-wide message
-    const isClassMessage = recipientId.startsWith('class-message-');
+    const isClassMessage = recipientId.startsWith("class-message-");
     let threadId;
     let participants = [];
+
+    console.log(
+      `[SendMessage] Processing ${isClassMessage ? "CLASS" : "PRIVATE"} message.`,
+    );
+    console.log(`[SendMessage] Sender: ${senderId}, Recipient: ${recipientId}`);
 
     try {
       let thread;
       if (isClassMessage) {
         threadId = recipientId; // e.g., 'class-message-Ms.Thompson'
-        participants = [senderId, 'class-message-recipient']; // A generic recipient for class messages
+        participants = [senderId, "class-message-recipient"]; // A generic recipient for class messages
+        console.log(`[SendMessage] CLASS message. ThreadID: ${threadId}`);
+
         // Find the class message thread for this teacher
         thread = await client
-          .db('TrinityCapital')
-          .collection('threads')
+          .db("TrinityCapital")
+          .collection("threads")
           .findOne({ threadId: threadId });
         if (!thread) {
+          console.log(
+            `[SendMessage] No existing class thread found. Creating new one.`,
+          );
           // Create new class message thread
           thread = {
             threadId: threadId,
-            type: 'class',
+            type: "class",
             participants: participants,
             messages: [],
             createdAt: timestamp,
           };
           await client
-            .db('TrinityCapital')
-            .collection('threads')
+            .db("TrinityCapital")
+            .collection("threads")
             .insertOne(thread);
+          console.log(`[SendMessage] New class thread created: ${threadId}`);
+        } else {
+          console.log(`[SendMessage] Found existing class thread: ${threadId}`);
         }
       } else {
         // Private message
         // Ensure consistent threadId for private chats (sorted participants)
         const sortedParticipants = [senderId, recipientId].sort();
-        threadId = sortedParticipants.join('_'); // e.g., 'Emily Johnson_Ms.Thompson'
+        threadId = sortedParticipants.join("_"); // e.g., 'Emily Johnson_Ms.Thompson'
         participants = sortedParticipants;
+        console.log(`[SendMessage] PRIVATE message. ThreadID: ${threadId}`);
 
         // Find existing private thread
         thread = await client
-          .db('TrinityCapital')
-          .collection('threads')
+          .db("TrinityCapital")
+          .collection("threads")
           .findOne({
             threadId: threadId,
-            type: 'private',
+            type: "private",
           });
 
         if (!thread) {
+          console.log(
+            `[SendMessage] No existing private thread found. Creating new one.`,
+          );
           // Create new private thread
           thread = {
             threadId: threadId,
-            type: 'private',
+            type: "private",
             participants: participants,
             messages: [],
             createdAt: timestamp,
           };
           await client
-            .db('TrinityCapital')
-            .collection('threads')
+            .db("TrinityCapital")
+            .collection("threads")
             .insertOne(thread);
+          console.log(`[SendMessage] New private thread created: ${threadId}`);
+        } else {
+          console.log(
+            `[SendMessage] Found existing private thread: ${threadId}`,
+          );
         }
       }
 
@@ -279,8 +360,8 @@ io.on('connection', socket => {
 
       // Add message to the thread and update lastMessageTimestamp
       await client
-        .db('TrinityCapital')
-        .collection('threads')
+        .db("TrinityCapital")
+        .collection("threads")
         .updateOne(
           { threadId: threadId },
           {
@@ -288,116 +369,159 @@ io.on('connection', socket => {
             $set: { lastMessageTimestamp: timestamp },
           },
         );
+      console.log(
+        `[SendMessage] Message document added to thread ${threadId} in DB.`,
+      );
 
       // --- Broadcasting to relevant users ---
       // For class messages, broadcast to all students of the teacher AND the teacher
       if (isClassMessage) {
         const teacherName = senderId; // senderId is the teacher's full name
+        console.log(
+          `[SendMessage] Broadcasting class message from teacher: ${teacherName}`,
+        );
         const teacherDoc = await client
-          .db('TrinityCapital')
-          .collection('Teachers')
+          .db("TrinityCapital")
+          .collection("Teachers")
           .findOne({ name: teacherName });
-        if (!teacherDoc) throw new Error('Teacher not found');
+        if (!teacherDoc) {
+          console.error(
+            `[SendMessage] CRITICAL: Teacher document not found for name: ${teacherName}`,
+          );
+          throw new Error("Teacher not found");
+        }
 
         const students = await client
-          .db('TrinityCapital')
-          .collection('User Profiles')
+          .db("TrinityCapital")
+          .collection("User Profiles")
           .find({ teacher: teacherDoc.name })
           .project({ memberName: 1 })
           .toArray();
+        console.log(
+          `[SendMessage] Found ${students.length} students for teacher ${teacherName}.`,
+        );
 
         // Send to all students
         for (const student of students) {
           const studentSocket = userSockets.get(student.memberName);
           if (studentSocket) {
             // Send the message as if it's from the teacher to the student, marked as class message
-            studentSocket.emit('newMessage', {
+            studentSocket.emit("newMessage", {
               senderId: teacherName,
               recipientId: student.memberName, // The student's ID
               messageContent,
               timestamp,
               isClassMessage: true,
             });
-            console.log(`Forwarded class message to ${student.memberName}`);
+            console.log(
+              `[SendMessage] --> Emitted 'newMessage' to student: ${student.memberName}`,
+            );
+          } else {
+            console.log(
+              `[SendMessage] --X No active socket for student: ${student.memberName}`,
+            );
           }
         }
-        // Send to the teacher (sender)
+        // Send to the teacher (sender) for echo
         const teacherSocket = userSockets.get(teacherName);
         if (teacherSocket) {
-          teacherSocket.emit('newMessage', messageDoc); // Send the original messageDoc
+          teacherSocket.emit("newMessage", messageDoc); // Send the original messageDoc
+          console.log(
+            `[SendMessage] --> Echoed 'newMessage' to sender (teacher): ${teacherName}`,
+          );
+        } else {
+          console.log(
+            `[SendMessage] --X No active socket for sender (teacher): ${teacherName}`,
+          );
         }
       } else {
         // Private message: send to recipient and sender
+        console.log(
+          `[SendMessage] Distributing private message between ${senderId} and ${recipientId}.`,
+        );
         const recipientSocket = userSockets.get(recipientId);
         if (recipientSocket) {
-          recipientSocket.emit('newMessage', messageDoc);
-          console.log(`Forwarded private message to ${recipientId}`);
+          recipientSocket.emit("newMessage", messageDoc);
+          console.log(
+            `[SendMessage] --> Emitted 'newMessage' to recipient: ${recipientId}`,
+          );
+        } else {
+          console.log(
+            `[SendMessage] --X No active socket for recipient: ${recipientId}`,
+          );
         }
         const senderSocket = userSockets.get(senderId);
         if (senderSocket) {
-          senderSocket.emit('newMessage', messageDoc);
+          senderSocket.emit("newMessage", messageDoc);
+          console.log(
+            `[SendMessage] --> Echoed 'newMessage' to sender: ${senderId}`,
+          );
+        } else {
+          console.log(
+            `[SendMessage] --X No active socket for sender: ${senderId}`,
+          );
         }
       }
       if (callback) callback({ success: true });
     } catch (error) {
-      console.error('Error processing sendMessage:', error);
+      console.error("Error processing sendMessage:", error);
       if (callback) callback({ success: false, error: error.message });
     }
   });
 
-  socket.on('disconnect', () => {
+  socket.on("disconnect", () => {
     try {
       // Remove socket from map when user disconnects
       for (const [userId, userSocket] of userSockets.entries()) {
         if (userSocket === socket) {
-          console.log('User disconnected:', userId);
+          console.log("User disconnected:", userId);
           userSockets.delete(userId);
           break;
         }
       }
     } catch (error) {
-      console.error('Error during disconnect:', error);
+      console.error("Error during disconnect:", error);
     }
   });
 
   // Handle errors
-  socket.on('error', error => {
-    console.error('Socket error:', error);
+  socket.on("error", (error) => {
+    console.error("Socket error:", error);
   });
 });
 
 // Listen for 'studentCreated' event from another server (localhost:5000)
-const { io: ClientIO } = require('socket.io-client');
+const { io: ClientIO } = require("socket.io-client");
 const EXTERNAL_SOCKET_URL =
-  process.env.EXTERNAL_SOCKET_URL || 'http://localhost:5000';
+  process.env.EXTERNAL_SOCKET_URL || "http://localhost:5000";
 const externalSocket = ClientIO(EXTERNAL_SOCKET_URL);
 
-externalSocket.on('connect', () => {
+externalSocket.on("connect", () => {
   console.log(
-    'Connected to external server at localhost:5000 for studentCreated events',
+    "Connected to external server at localhost:5000 for studentCreated events",
   );
 });
 
-externalSocket.on('studentCreated', (data, callback) => {
-  console.log('Received studentCreated event from localhost:5000:', data);
+externalSocket.on("studentCreated", (data, callback) => {
+  console.log("Received studentCreated event from localhost:5000:", data);
   // Emit to all connected clients on this server
-  io.emit('studentAdded', data);
+  io.emit("studentAdded", data);
   // Send confirmation back to 5000
-  if (typeof callback === 'function') {
-    console.log('Sending ack callback for studentCreated event');
+  if (typeof callback === "function") {
+    console.log("Sending ack callback for studentCreated event");
     callback({ success: true });
   } else {
-    console.warn('No callback function provided for studentCreated event');
+    console.warn("No callback function provided for studentCreated event");
   }
 });
 
-externalSocket.on('disconnect', () => {
-  console.log('Disconnected from external server at localhost:5000');
+externalSocket.on("disconnect", () => {
+  console.log("Disconnected from external server at localhost:5000");
 });
 
 /*****************************************MongoDB***************************************************/
 
-const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(mongoUri, {
@@ -413,14 +537,19 @@ async function run() {
     // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
     // Send a ping to confirm a successful connection
-    await client.db('admin').command({ ping: 1 });
+    await client.db("admin").command({ ping: 1 });
     console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!',
+      "Pinged your deployment. You successfully connected to MongoDB!",
     );
 
     // Initialize scheduler manager after MongoDB connection
     schedulerManager = new SchedulerManager(client, io, userSockets);
     await schedulerManager.initializeScheduler();
+
+    // Setup GitHub webhook handler
+    const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET || "";
+    const serverUrl = process.env.SERVER_URL || "http://localhost:3000";
+    setupGitHubWebhook(app, webhookSecret, serverUrl);
   } finally {
     // // Ensures that the client will close when you finish/error
     // await client.close();
@@ -441,7 +570,7 @@ app.use(
 
 // Test route to verify API is working
 
-app.post('/initialBalance', async (req, res) => {
+app.post("/initialBalance", async (req, res) => {
   const { parcel } = req.body;
 
   const profile = parcel;
@@ -453,11 +582,11 @@ app.post('/initialBalance', async (req, res) => {
 
   let checkingBalance;
 
-  profile.checkingAccount.transactions.forEach(transaction => {
+  profile.checkingAccount.transactions.forEach((transaction) => {
     checkingTransAmounts.push(transaction.amount);
   });
 
-  profile.savingsAccount.transactions.forEach(transaction => {
+  profile.savingsAccount.transactions.forEach((transaction) => {
     savingsTransAmounts.push(transaction.amount);
   });
 
@@ -465,44 +594,44 @@ app.post('/initialBalance', async (req, res) => {
   savingsBalance = savingsTransAmounts.reduce((acc, mov) => acc + mov, 0);
 
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'checkingAccount.accountHolder': memberName },
+      { "checkingAccount.accountHolder": memberName },
       {
-        $set: { 'checkingAccount.balanceTotal': checkingBalance },
+        $set: { "checkingAccount.balanceTotal": checkingBalance },
       },
     );
 
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'savingsAccount.accountHolder': memberName },
+      { "savingsAccount.accountHolder": memberName },
       {
-        $set: { 'savingsAccount.balanceTotal': savingsBalance },
+        $set: { "savingsAccount.balanceTotal": savingsBalance },
       },
     );
 
   const updatedUserProfile = await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
-    .findOne({ 'checkingAccount.accountHolder': memberName });
+    .db("TrinityCapital")
+    .collection("User Profiles")
+    .findOne({ "checkingAccount.accountHolder": memberName });
 
   const updatedChecking = updatedUserProfile.checkingAccount;
 
   // Send update only to specific user
   const userSocket = userSockets.get(memberName);
   if (userSocket) {
-    userSocket.emit('checkingAccountUpdate', updatedChecking);
+    userSocket.emit("checkingAccountUpdate", updatedChecking);
   }
 });
 
-app.get('/profiles', async (req, res) => {
+app.get("/profiles", async (req, res) => {
   try {
     const profiles = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .find()
       .toArray();
 
@@ -510,23 +639,23 @@ app.get('/profiles', async (req, res) => {
     const userSocket = userSockets.get(req.query.userId);
 
     if (userSocket) {
-      userSocket.emit('profilesData', profiles);
+      userSocket.emit("profilesData", profiles);
     }
 
     res.json(profiles);
   } catch (error) {
-    console.error('Error retrieving profiles:', error);
-    res.status(500).json({ error: 'Error retrieving profiles' });
+    console.error("Error retrieving profiles:", error);
+    res.status(500).json({ error: "Error retrieving profiles" });
   }
 });
 
 // NEW: Get profile by memberName (student name)
-app.get('/profiles/:memberName', async (req, res) => {
+app.get("/profiles/:memberName", async (req, res) => {
   try {
     const { memberName } = req.params;
     console.log(`\n\n📋 PROFILE REQUEST for student: ${memberName}`);
 
-    const collection = client.db('TrinityCapital').collection('User Profiles');
+    const collection = client.db("TrinityCapital").collection("User Profiles");
     const profile = await collection.findOne({ memberName });
 
     if (!profile) {
@@ -539,22 +668,22 @@ app.get('/profiles/:memberName', async (req, res) => {
 
     console.log(`✅ Profile found for student: ${memberName}`);
     console.log(`👤 Student: ${profile.memberName}`);
-    console.log(`🏫 School: ${profile.school || 'N/A'}`);
-    console.log(`👨‍🏫 Teacher: ${profile.teacher || 'N/A'}`);
+    console.log(`🏫 School: ${profile.school || "N/A"}`);
+    console.log(`👨‍🏫 Teacher: ${profile.teacher || "N/A"}`);
 
     // Log assigned units structure
     if (profile.assignedUnitIds && Array.isArray(profile.assignedUnitIds)) {
       console.log(`📚 Assigned Units: ${profile.assignedUnitIds.length}`);
       profile.assignedUnitIds.forEach((unit, index) => {
         console.log(
-          `  Unit ${index + 1}: ${unit.unitName || unit.unitId || 'Unknown'}`,
+          `  Unit ${index + 1}: ${unit.unitName || unit.unitId || "Unknown"}`,
         );
         console.log(
-          `    - Lesson IDs: ${Array.isArray(unit.lessonIds) ? unit.lessonIds.length : 'None'}`,
+          `    - Lesson IDs: ${Array.isArray(unit.lessonIds) ? unit.lessonIds.length : "None"}`,
         );
         if (Array.isArray(unit.lessonIds)) {
           console.log(
-            `    - First few lesson IDs: ${unit.lessonIds.slice(0, 3).join(', ')}${unit.lessonIds.length > 3 ? '...' : ''}`,
+            `    - First few lesson IDs: ${unit.lessonIds.slice(0, 3).join(", ")}${unit.lessonIds.length > 3 ? "..." : ""}`,
           );
         }
       });
@@ -567,22 +696,22 @@ app.get('/profiles/:memberName', async (req, res) => {
 
     res.json(profile);
   } catch (error) {
-    console.error('Error retrieving profile:', error);
+    console.error("Error retrieving profile:", error);
     res.status(500).json({
       success: false,
-      error: 'Error retrieving profile',
+      error: "Error retrieving profile",
       message: error.message,
     });
   }
 });
 
 // NEW: Get profile by memberName (student name)
-app.get('/profiles/:memberName', async (req, res) => {
+app.get("/profiles/:memberName", async (req, res) => {
   try {
     const { memberName } = req.params;
     console.log(`\n\n📋 PROFILE REQUEST for student: ${memberName}`);
 
-    const collection = client.db('TrinityCapital').collection('User Profiles');
+    const collection = client.db("TrinityCapital").collection("User Profiles");
     const profile = await collection.findOne({ memberName });
 
     if (!profile) {
@@ -595,22 +724,22 @@ app.get('/profiles/:memberName', async (req, res) => {
 
     console.log(`✅ Profile found for student: ${memberName}`);
     console.log(`👤 Student: ${profile.memberName}`);
-    console.log(`🏫 School: ${profile.school || 'N/A'}`);
-    console.log(`👨‍🏫 Teacher: ${profile.teacher || 'N/A'}`);
+    console.log(`🏫 School: ${profile.school || "N/A"}`);
+    console.log(`👨‍🏫 Teacher: ${profile.teacher || "N/A"}`);
 
     // Log assigned units structure
     if (profile.assignedUnitIds && Array.isArray(profile.assignedUnitIds)) {
       console.log(`📚 Assigned Units: ${profile.assignedUnitIds.length}`);
       profile.assignedUnitIds.forEach((unit, index) => {
         console.log(
-          `  Unit ${index + 1}: ${unit.unitName || unit.unitId || 'Unknown'}`,
+          `  Unit ${index + 1}: ${unit.unitName || unit.unitId || "Unknown"}`,
         );
         console.log(
-          `    - Lesson IDs: ${Array.isArray(unit.lessonIds) ? unit.lessonIds.length : 'None'}`,
+          `    - Lesson IDs: ${Array.isArray(unit.lessonIds) ? unit.lessonIds.length : "None"}`,
         );
         if (Array.isArray(unit.lessonIds)) {
           console.log(
-            `    - First few lesson IDs: ${unit.lessonIds.slice(0, 3).join(', ')}${unit.lessonIds.length > 3 ? '...' : ''}`,
+            `    - First few lesson IDs: ${unit.lessonIds.slice(0, 3).join(", ")}${unit.lessonIds.length > 3 ? "..." : ""}`,
           );
         }
       });
@@ -623,16 +752,16 @@ app.get('/profiles/:memberName', async (req, res) => {
 
     res.json(profile);
   } catch (error) {
-    console.error('Error retrieving profile:', error);
+    console.error("Error retrieving profile:", error);
     res.status(500).json({
       success: false,
-      error: 'Error retrieving profile',
+      error: "Error retrieving profile",
       message: error.message,
     });
   }
 });
 
-app.post('/loans', async (req, res) => {
+app.post("/loans", async (req, res) => {
   const { parcel } = req.body;
   const profile = parcel[0];
   const amount = parcel[1];
@@ -640,9 +769,9 @@ app.post('/loans', async (req, res) => {
 
   try {
     const UserProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
-      .findOne({ 'checkingAccount.accountHolder': name });
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .findOne({ "checkingAccount.accountHolder": name });
 
     // Update the transactions in the user profile
     const balance = UserProfile.checkingAccount.transactions.reduce(
@@ -650,46 +779,46 @@ app.post('/loans', async (req, res) => {
       0,
     );
     await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .updateOne(
-        { 'checkingAccount.accountHolder': name },
+        { "checkingAccount.accountHolder": name },
         {
-          $push: { 'checkingAccount.transactions': amount },
-          $set: { 'checkingAccount.balanceTotal': balance },
+          $push: { "checkingAccount.transactions": amount },
+          $set: { "checkingAccount.balanceTotal": balance },
         },
       );
     let newDate = new Date().toISOString();
     await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .updateOne(
-        { 'checkingAccount.accountHolder': name },
-        { $push: { 'checkingAccount.movementsDates': newDate } },
+        { "checkingAccount.accountHolder": name },
+        { $push: { "checkingAccount.movementsDates": newDate } },
       );
     const updatedUserProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
-      .findOne({ 'checkingAccount.accountHolder': name });
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .findOne({ "checkingAccount.accountHolder": name });
 
     const updatedChecking = updatedUserProfile.checkingAccount;
 
     // Send update only to specific user
     const userSocket = userSockets.get(name);
     if (userSocket) {
-      userSocket.emit('checkingAccountUpdate', updatedChecking);
+      userSocket.emit("checkingAccountUpdate", updatedChecking);
     }
 
-    res.status(200).json({ message: 'Transaction successful' });
+    res.status(200).json({ message: "Transaction successful" });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
 /*****************************************Transfers***************************************************/
 
-app.post('/transfer', async (req, res) => {
+app.post("/transfer", async (req, res) => {
   const { parcel } = req.body;
 
   const currentProfile = parcel[0];
@@ -705,21 +834,21 @@ app.post('/transfer', async (req, res) => {
 
   try {
     if (
-      accountFromPg.accountType === 'Checking' &&
-      accountToPg.accountType === 'Savings'
+      accountFromPg.accountType === "Checking" &&
+      accountToPg.accountType === "Savings"
     ) {
       await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
+        .db("TrinityCapital")
+        .collection("User Profiles")
         .updateOne(
-          { 'checkingAccount.accountHolder': memberNamePg },
+          { "checkingAccount.accountHolder": memberNamePg },
           {
             $push: {
-              'checkingAccount.transactions': {
+              "checkingAccount.transactions": {
                 amount: -amount,
-                interval: 'once',
+                interval: "once",
                 Name: ` ${accountFromPg.accountType} ---> ${accountToPg.accountType}`,
-                Category: 'Transfer',
+                Category: "Transfer",
               },
             },
           },
@@ -727,56 +856,56 @@ app.post('/transfer', async (req, res) => {
 
       let newDate = new Date().toISOString();
       await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
+        .db("TrinityCapital")
+        .collection("User Profiles")
         .updateOne(
-          { 'checkingAccount.accountHolder': memberNamePg },
-          { $push: { 'checkingAccount.movementsDates': newDate } },
+          { "checkingAccount.accountHolder": memberNamePg },
+          { $push: { "checkingAccount.movementsDates": newDate } },
         );
 
       await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
+        .db("TrinityCapital")
+        .collection("User Profiles")
         .updateOne(
-          { 'savingsAccount.accountHolder': memberNamePg },
+          { "savingsAccount.accountHolder": memberNamePg },
           {
             $push: {
-              'savingsAccount.transactions': {
+              "savingsAccount.transactions": {
                 amount: amount,
-                interval: 'once',
+                interval: "once",
                 Name: ` ${accountFromPg.accountType} ---> ${accountToPg.accountType}`,
-                Category: 'Transfer',
+                Category: "Transfer",
               },
             },
           },
         );
 
       await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
+        .db("TrinityCapital")
+        .collection("User Profiles")
         .updateOne(
-          { 'savingsAccount.accountHolder': memberNamePg },
-          { $push: { 'savingsAccount.movementsDates': newDate } },
+          { "savingsAccount.accountHolder": memberNamePg },
+          { $push: { "savingsAccount.movementsDates": newDate } },
         );
 
       const updatedUserProfile = await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
-        .findOne({ 'checkingAccount.accountHolder': memberNamePg });
+        .db("TrinityCapital")
+        .collection("User Profiles")
+        .findOne({ "checkingAccount.accountHolder": memberNamePg });
 
       const updatedChecking = updatedUserProfile.checkingAccount;
 
       // Send update only to specific user
       const userSocket = userSockets.get(memberNamePg);
       if (userSocket) {
-        userSocket.emit('checkingAccountUpdate', updatedChecking);
+        userSocket.emit("checkingAccountUpdate", updatedChecking);
       }
 
-      res.status(200).json({ message: 'Transaction successful' });
+      res.status(200).json({ message: "Transaction successful" });
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Internal server error' });
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -790,7 +919,7 @@ const balanceCalc = async function (memberName, acc, type) {
 
   // Collecting transaction amounts
   try {
-    acc.transactions.forEach(transaction => {
+    acc.transactions.forEach((transaction) => {
       amounts.push(transaction.amount);
     });
     console.log(`Collected transaction amounts: ${amounts}`);
@@ -813,23 +942,23 @@ const balanceCalc = async function (memberName, acc, type) {
 
   // Updating database with new balance
   try {
-    if (type === 'Checking') {
+    if (type === "Checking") {
       console.log(`Updating Checking account balance for ${memberName}`);
       await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
+        .db("TrinityCapital")
+        .collection("User Profiles")
         .updateOne(
-          { 'checkingAccount.accountHolder': memberName },
-          { $set: { 'checkingAccount.balanceTotal': balance } },
+          { "checkingAccount.accountHolder": memberName },
+          { $set: { "checkingAccount.balanceTotal": balance } },
         );
-    } else if (type === 'Savings') {
+    } else if (type === "Savings") {
       console.log(`Updating Savings account balance for ${memberName}`);
       await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
+        .db("TrinityCapital")
+        .collection("User Profiles")
         .updateOne(
-          { 'savingsAccount.accountHolder': memberName },
-          { $set: { 'savingsAccount.balanceTotal': balance } },
+          { "savingsAccount.accountHolder": memberName },
+          { $set: { "savingsAccount.balanceTotal": balance } },
         );
     }
   } catch (error) {
@@ -841,9 +970,9 @@ const balanceCalc = async function (memberName, acc, type) {
   let updatedUserProfile;
   try {
     updatedUserProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
-      .findOne({ 'checkingAccount.accountHolder': memberName });
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .findOne({ "checkingAccount.accountHolder": memberName });
 
     if (!updatedUserProfile) {
       console.error(`No user profile found for ${memberName}`);
@@ -870,7 +999,7 @@ const balanceCalc = async function (memberName, acc, type) {
       console.log(
         `Emitting 'checkingAccountUpdate' event to socket for ${memberName}`,
       );
-      userSocket.emit('checkingAccountUpdate', updatedChecking);
+      userSocket.emit("checkingAccountUpdate", updatedChecking);
     } else {
       console.warn(`No socket found for ${memberName}`);
     }
@@ -888,7 +1017,7 @@ const balanceCalc = async function (memberName, acc, type) {
       );
 
       // Emit to all connected sockets (teachers will filter by their name)
-      io.emit('studentFinancialUpdate', {
+      io.emit("studentFinancialUpdate", {
         studentName: memberName,
         teacherName: studentTeacher,
         updatedData: {
@@ -907,7 +1036,7 @@ const balanceCalc = async function (memberName, acc, type) {
   }
 };
 
-app.post('/bills', async (req, res) => {
+app.post("/bills", async (req, res) => {
   try {
     const { parcel } = req.body;
 
@@ -919,7 +1048,7 @@ app.post('/bills', async (req, res) => {
     const cat = parcel[5];
     const date = parcel[6];
 
-    console.log('Processing bill/payment:', {
+    console.log("Processing bill/payment:", {
       type,
       amount,
       interval,
@@ -943,16 +1072,16 @@ app.post('/bills', async (req, res) => {
 
       // Get updated profile for response
       const updatedUserProfile = await client
-        .db('TrinityCapital')
-        .collection('User Profiles')
-        .findOne({ 'checkingAccount.accountHolder': prfName });
+        .db("TrinityCapital")
+        .collection("User Profiles")
+        .findOne({ "checkingAccount.accountHolder": prfName });
 
       const updatedChecking = updatedUserProfile.checkingAccount;
 
       // Send update to user
       const userSocket = userSockets.get(prfName);
       if (userSocket) {
-        userSocket.emit('checkingAccountUpdate', updatedChecking);
+        userSocket.emit("checkingAccountUpdate", updatedChecking);
       }
 
       res.status(200).json({
@@ -961,35 +1090,35 @@ app.post('/bills', async (req, res) => {
         schedulerStatus: schedulerManager.getSchedulerStatus(),
       });
     } else {
-      res.status(500).json({ error: 'Scheduler not initialized' });
+      res.status(500).json({ error: "Scheduler not initialized" });
     }
   } catch (error) {
-    console.error('Error in /bills endpoint:', error);
+    console.error("Error in /bills endpoint:", error);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: error.message });
+      .json({ error: "Internal Server Error", details: error.message });
   }
 });
 
 // Process existing bills and payments immediately (for testing/setup)
-app.post('/processExistingBillsPayments', async (req, res) => {
+app.post("/processExistingBillsPayments", async (req, res) => {
   try {
     const { memberName } = req.body;
 
     if (!memberName) {
-      return res.status(400).json({ error: 'Missing memberName' });
+      return res.status(400).json({ error: "Missing memberName" });
     }
 
     console.log(`Processing existing bills and payments for ${memberName}`);
 
     // Get the user profile
     const userProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
-      .findOne({ 'checkingAccount.accountHolder': memberName });
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .findOne({ "checkingAccount.accountHolder": memberName });
 
     if (!userProfile) {
-      return res.status(404).json({ error: 'User profile not found' });
+      return res.status(404).json({ error: "User profile not found" });
     }
 
     const bills = userProfile.checkingAccount.bills || [];
@@ -1002,7 +1131,7 @@ app.post('/processExistingBillsPayments', async (req, res) => {
     // Process bills immediately
     for (let bill of bills) {
       if (schedulerManager) {
-        await schedulerManager.processTransaction(memberName, bill, 'bill');
+        await schedulerManager.processTransaction(memberName, bill, "bill");
       }
     }
 
@@ -1012,7 +1141,7 @@ app.post('/processExistingBillsPayments', async (req, res) => {
         await schedulerManager.processTransaction(
           memberName,
           payment,
-          'payment',
+          "payment",
         );
       }
     }
@@ -1024,36 +1153,36 @@ app.post('/processExistingBillsPayments', async (req, res) => {
       paymentsProcessed: payments.length,
     });
   } catch (error) {
-    console.error('Error processing existing bills/payments:', error);
+    console.error("Error processing existing bills/payments:", error);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: error.message });
+      .json({ error: "Internal Server Error", details: error.message });
   }
 });
 
 // Get scheduler status
-app.get('/scheduler/status', (req, res) => {
+app.get("/scheduler/status", (req, res) => {
   try {
     if (schedulerManager) {
       res.json(schedulerManager.getSchedulerStatus());
     } else {
-      res.status(500).json({ error: 'Scheduler not initialized' });
+      res.status(500).json({ error: "Scheduler not initialized" });
     }
   } catch (error) {
-    console.error('Error getting scheduler status:', error);
+    console.error("Error getting scheduler status:", error);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: error.message });
+      .json({ error: "Internal Server Error", details: error.message });
   }
 });
 
 // Remove a scheduled bill or payment
-app.post('/scheduler/remove', async (req, res) => {
+app.post("/scheduler/remove", async (req, res) => {
   try {
     const { memberName, transactionId, type } = req.body;
 
     if (!memberName || !transactionId || !type) {
-      return res.status(400).json({ error: 'Missing required parameters' });
+      return res.status(400).json({ error: "Missing required parameters" });
     }
 
     if (schedulerManager) {
@@ -1064,28 +1193,28 @@ app.post('/scheduler/remove', async (req, res) => {
       );
       res.json({ success: true, message: `Removed scheduled ${type}` });
     } else {
-      res.status(500).json({ error: 'Scheduler not initialized' });
+      res.status(500).json({ error: "Scheduler not initialized" });
     }
   } catch (error) {
-    console.error('Error removing scheduled transaction:', error);
+    console.error("Error removing scheduled transaction:", error);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: error.message });
+      .json({ error: "Internal Server Error", details: error.message });
   }
 });
 
 // Get scheduled transactions for a user
-app.get('/scheduler/user/:memberName', async (req, res) => {
+app.get("/scheduler/user/:memberName", async (req, res) => {
   try {
     const { memberName } = req.params;
 
     const userProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
-      .findOne({ 'checkingAccount.accountHolder': memberName });
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .findOne({ "checkingAccount.accountHolder": memberName });
 
     if (!userProfile) {
-      return res.status(404).json({ error: 'User profile not found' });
+      return res.status(404).json({ error: "User profile not found" });
     }
 
     const bills = userProfile.checkingAccount.bills || [];
@@ -1093,25 +1222,25 @@ app.get('/scheduler/user/:memberName', async (req, res) => {
 
     res.json({
       memberName,
-      bills: bills.map(bill => ({
+      bills: bills.map((bill) => ({
         ...bill,
-        nextExecution: bill.nextExecution || 'Not scheduled',
+        nextExecution: bill.nextExecution || "Not scheduled",
       })),
-      payments: payments.map(payment => ({
+      payments: payments.map((payment) => ({
         ...payment,
-        nextExecution: payment.nextExecution || 'Not scheduled',
+        nextExecution: payment.nextExecution || "Not scheduled",
       })),
     });
   } catch (error) {
-    console.error('Error getting user scheduled transactions:', error);
+    console.error("Error getting user scheduled transactions:", error);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: error.message });
+      .json({ error: "Internal Server Error", details: error.message });
   }
 });
 
 // Get catch-up statistics
-app.get('/scheduler/catchup-stats', async (req, res) => {
+app.get("/scheduler/catchup-stats", async (req, res) => {
   try {
     const days = parseInt(req.query.days) || 7;
     const stats = await schedulerManager.getCatchupStats(days);
@@ -1122,18 +1251,18 @@ app.get('/scheduler/catchup-stats', async (req, res) => {
       stats: stats,
     });
   } catch (error) {
-    console.error('Error getting catch-up stats:', error);
+    console.error("Error getting catch-up stats:", error);
     res.status(500).json({
-      error: 'Internal Server Error',
+      error: "Internal Server Error",
       details: error.message,
     });
   }
 });
 
 // Manual catch-up check (for admin/testing purposes)
-app.post('/scheduler/manual-catchup', async (req, res) => {
+app.post("/scheduler/manual-catchup", async (req, res) => {
   try {
-    console.log('🔧 Manual catch-up check requested...');
+    console.log("🔧 Manual catch-up check requested...");
     const result = await schedulerManager.manualCatchupCheck();
 
     res.json({
@@ -1144,9 +1273,9 @@ app.post('/scheduler/manual-catchup', async (req, res) => {
       details: result,
     });
   } catch (error) {
-    console.error('Error performing manual catch-up:', error);
+    console.error("Error performing manual catch-up:", error);
     res.status(500).json({
-      error: 'Internal Server Error',
+      error: "Internal Server Error",
       details: error.message,
     });
   }
@@ -1154,7 +1283,7 @@ app.post('/scheduler/manual-catchup', async (req, res) => {
 
 /********************************************************DEPOSITS***********************************************/
 
-app.post('/deposits', async (req, res) => {
+app.post("/deposits", async (req, res) => {
   let newDate = new Date().toISOString();
   const { parcel } = req.body;
 
@@ -1163,34 +1292,34 @@ app.post('/deposits', async (req, res) => {
   const memberName = parcel[2];
 
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'checkingAccount.accountHolder': memberName },
+      { "checkingAccount.accountHolder": memberName },
       {
         $push: {
-          'checkingAccount.transactions': {
+          "checkingAccount.transactions": {
             amount: -amount,
-            interval: 'once',
+            interval: "once",
             Name: `${destination}`,
-            Category: 'Check Deposit',
+            Category: "Check Deposit",
           },
         },
       },
     );
 
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'checkingAccount.accountHolder': memberName },
-      { $push: { 'checkingAccount.movementsDates': newDate } },
+      { "checkingAccount.accountHolder": memberName },
+      { $push: { "checkingAccount.movementsDates": newDate } },
     );
 
   const updatedUserProfile = await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
-    .findOne({ 'checkingAccount.accountHolder': memberName });
+    .db("TrinityCapital")
+    .collection("User Profiles")
+    .findOne({ "checkingAccount.accountHolder": memberName });
 
   const updatedChecking = updatedUserProfile.checkingAccount;
 
@@ -1200,11 +1329,11 @@ app.post('/deposits', async (req, res) => {
   // Send update only to specific user
   const userSocket = userSockets.get(memberName);
   if (userSocket) {
-    userSocket.emit('checkingAccountUpdate', updatedChecking);
+    userSocket.emit("checkingAccountUpdate", updatedChecking);
   }
 });
 
-app.post('/sendFunds', async (req, res) => {
+app.post("/sendFunds", async (req, res) => {
   const { parcel } = req.body;
 
   const destinationProfile = parcel[0];
@@ -1216,60 +1345,60 @@ app.post('/sendFunds', async (req, res) => {
   let destinationDate = new Date();
 
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'checkingAccount.accountHolder': destinationProfile },
+      { "checkingAccount.accountHolder": destinationProfile },
       {
         $push: {
-          'checkingAccount.transactions': {
+          "checkingAccount.transactions": {
             amount: destinationAmount,
-            interval: 'once',
+            interval: "once",
             Name: `Deposit from ${sender}`,
-            Category: 'Money Deposit',
+            Category: "Money Deposit",
           },
         },
       },
     );
 
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'checkingAccount.accountHolder': destinationProfile },
-      { $push: { 'checkingAccount.movementsDates': destinationDate } },
+      { "checkingAccount.accountHolder": destinationProfile },
+      { $push: { "checkingAccount.movementsDates": destinationDate } },
     );
 
   //FOR SENDER
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'checkingAccount.accountHolder': sender },
+      { "checkingAccount.accountHolder": sender },
       {
         $push: {
-          'checkingAccount.transactions': {
+          "checkingAccount.transactions": {
             amount: -destinationAmount,
-            interval: 'once',
+            interval: "once",
             Name: `Deposit to ${destinationProfile}`,
-            Category: 'Money Deposit',
+            Category: "Money Deposit",
           },
         },
       },
     );
 
   await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .updateOne(
-      { 'checkingAccount.accountHolder': sender },
-      { $push: { 'checkingAccount.movementsDates': destinationDate } },
+      { "checkingAccount.accountHolder": sender },
+      { $push: { "checkingAccount.movementsDates": destinationDate } },
     );
 
   const updatedUserProfile = await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
-    .findOne({ 'checkingAccount.accountHolder': sender });
+    .db("TrinityCapital")
+    .collection("User Profiles")
+    .findOne({ "checkingAccount.accountHolder": sender });
 
   const updatedChecking = updatedUserProfile.checkingAccount;
 
@@ -1278,14 +1407,14 @@ app.post('/sendFunds', async (req, res) => {
   // Send update only to specific user
   const userSocket = userSockets.get(sender);
   if (userSocket) {
-    userSocket.emit('checkingAccountUpdate', updatedChecking);
+    userSocket.emit("checkingAccountUpdate", updatedChecking);
   }
 });
 
-app.post('/timeTravelProfiles', async (req, res) => {
-  const db = client.db('TrinityCapital');
-  const profilesCollection = db.collection('User Profiles');
-  const timeTravelCollection = db.collection('Time Travel Profiles');
+app.post("/timeTravelProfiles", async (req, res) => {
+  const db = client.db("TrinityCapital");
+  const profilesCollection = db.collection("User Profiles");
+  const timeTravelCollection = db.collection("Time Travel Profiles");
 
   const { userName } = req.body; // Get username from request
 
@@ -1306,7 +1435,7 @@ app.post('/timeTravelProfiles', async (req, res) => {
 
       // Emit only to the user's socket
       if (userSocket) {
-        userSocket.emit('checkingAccountUpdate', updatedChecking);
+        userSocket.emit("checkingAccountUpdate", updatedChecking);
       }
 
       return res.status(200).json(existingProfile);
@@ -1316,7 +1445,7 @@ app.post('/timeTravelProfiles', async (req, res) => {
     let regularProfile = await profilesCollection.findOne({ userName });
 
     if (!regularProfile) {
-      return res.status(404).json({ error: 'User profile not found' });
+      return res.status(404).json({ error: "User profile not found" });
     }
 
     // Create a new Time Travel Profile with empty transactions
@@ -1327,29 +1456,29 @@ app.post('/timeTravelProfiles', async (req, res) => {
       accountLevel: regularProfile.accountLevel, // Keep existing account level
       checkingAccount: {
         routingNumber: 141257185,
-        currency: 'USD',
-        locale: 'en-US',
+        currency: "USD",
+        locale: "en-US",
         created: new Date().toISOString(),
         accountHolder: regularProfile.memberName,
         balanceTotal: 0,
         bills: [],
         payments: [],
-        accountType: 'Checking',
+        accountType: "Checking",
         accountNumber: regularProfile.checkingAccount.accountNumber,
         movementsDates: [],
         transactions: [],
       },
       savingsAccount: {
         routingNumber: 141257185,
-        currency: 'USD',
-        locale: 'en-US',
+        currency: "USD",
+        locale: "en-US",
         created: new Date().toISOString(),
         accountHolder: regularProfile.memberName,
         username: regularProfile.userName,
         balanceTotal: 0,
         bills: [],
         payments: [],
-        accountType: 'Savings',
+        accountType: "Savings",
         accountNumber: regularProfile.savingsAccount.accountNumber,
         movementsDates: [],
         transactions: [],
@@ -1365,20 +1494,20 @@ app.post('/timeTravelProfiles', async (req, res) => {
 
     // Emit only to the user's socket
     if (userSocket) {
-      userSocket.emit('checkingAccountUpdate', updatedChecking);
+      userSocket.emit("checkingAccountUpdate", updatedChecking);
     }
 
     return res.status(201).json(newTimeTravelProfile);
   } catch (error) {
-    console.error('Error creating time travel profile:', error);
-    return res.status(500).json({ error: 'Internal server error' });
+    console.error("Error creating time travel profile:", error);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
 /**************************************************DONATIONS*********************************************/
 
 // Simple donation endpoint for checking account donations
-app.post('/donations', async (req, res) => {
+app.post("/donations", async (req, res) => {
   try {
     const { parcel } = req.body;
     const [donorName, donationAmount] = parcel;
@@ -1391,19 +1520,19 @@ app.post('/donations', async (req, res) => {
       message: `Donation of $${donationAmount} processed successfully`,
       amount: donationAmount,
       donor: donorName,
-      account: 'checking',
+      account: "checking",
     });
   } catch (error) {
-    console.error('Error processing donation:', error);
+    console.error("Error processing donation:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to process donation',
+      error: "Failed to process donation",
     });
   }
 });
 
 // Simple donation endpoint for savings account donations
-app.post('/donationsSavings', async (req, res) => {
+app.post("/donationsSavings", async (req, res) => {
   try {
     const { parcel } = req.body;
     const [donorName, donationAmount] = parcel;
@@ -1416,13 +1545,13 @@ app.post('/donationsSavings', async (req, res) => {
       message: `Savings donation of $${donationAmount} processed successfully`,
       amount: donationAmount,
       donor: donorName,
-      account: 'savings',
+      account: "savings",
     });
   } catch (error) {
-    console.error('Error processing savings donation:', error);
+    console.error("Error processing savings donation:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to process savings donation',
+      error: "Failed to process savings donation",
     });
   }
 });
@@ -1439,7 +1568,7 @@ if (mailUser && mailPass) {
   // Create a transporter for sending feedback emails.
   // NOTE: Prefer setting EMAIL_USER and EMAIL_PASS in your .env file.
   feedbackTransporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
+    host: "smtp.gmail.com",
     port: 465,
     secure: true, // use TLS
     auth: {
@@ -1455,13 +1584,13 @@ if (mailUser && mailPass) {
     },
     // optionally enable debug: true for verbose logs in dev
   });
-  console.log('✅ Feedback email service is configured.');
+  console.log("✅ Feedback email service is configured.");
 } else {
   console.warn(
-    '⚠️ WARNING: Email credentials are not set in the .env file (EMAIL_USER/EMAIL_PASS).',
+    "⚠️ WARNING: Email credentials are not set in the .env file (EMAIL_USER/EMAIL_PASS).",
   );
   console.warn(
-    'The /submit-feedback endpoint will save to the database but will NOT send emails.',
+    "The /submit-feedback endpoint will save to the database but will NOT send emails.",
   );
 }
 
@@ -1475,21 +1604,21 @@ async function trySendFeedbackEmail(mailOptions, timeoutMs = 12000) {
     const result = await Promise.race([
       sendPromise,
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('send_timeout')), timeoutMs),
+        setTimeout(() => reject(new Error("send_timeout")), timeoutMs),
       ),
     ]);
-    console.log('Feedback email sent:', result && result.response);
+    console.log("Feedback email sent:", result && result.response);
     return true;
   } catch (err) {
     console.error(
-      'Feedback email failed:',
+      "Feedback email failed:",
       err && err.message ? err.message : err,
     );
     return false;
   }
 }
 
-app.post('/submit-feedback', async (req, res) => {
+app.post("/submit-feedback", async (req, res) => {
   try {
     const { parcel } = req.body;
     const { type, userType, ...data } = parcel;
@@ -1497,15 +1626,15 @@ app.post('/submit-feedback', async (req, res) => {
     if (!type || !data) {
       return res
         .status(400)
-        .json({ success: false, message: 'Invalid feedback data.' });
+        .json({ success: false, message: "Invalid feedback data." });
     }
 
-    if (type === 'general') {
+    if (type === "general") {
       // --- General Feedback Handler ---
       const { category, details } = data;
       const feedbackDoc = {
-        studentName: 'Anonymous',
-        userType: userType || 'Unknown',
+        studentName: "Anonymous",
+        userType: userType || "Unknown",
         category,
         details,
         submittedAt: new Date(),
@@ -1513,19 +1642,19 @@ app.post('/submit-feedback', async (req, res) => {
 
       // 1. Save to database
       await client
-        .db('TrinityCapital')
-        .collection('GeneralFeedback')
+        .db("TrinityCapital")
+        .collection("GeneralFeedback")
         .insertOne(feedbackDoc);
 
       // 2. Send email (only if transporter is configured)
       if (feedbackTransporter) {
         const mailOptions = {
           from: `"Trinity Capital Feedback" <${mailUser}>`,
-          to: 'trinitycapitalsim@gmail.com',
-          subject: `New General Feedback from a ${userType || 'user'}`,
+          to: "trinitycapitalsim@gmail.com",
+          subject: `New General Feedback from a ${userType || "user"}`,
           html: `
           <h3>General Feedback Received</h3>
-          <p><strong>User Type:</strong> ${userType || 'Unknown'}</p>
+          <p><strong>User Type:</strong> ${userType || "Unknown"}</p>
           <p><strong>Student:</strong> Anonymous</p>
           <p><strong>Category:</strong> ${category}</p>
           <p><strong>Details:</strong></p>
@@ -1536,25 +1665,25 @@ app.post('/submit-feedback', async (req, res) => {
         const emailOk = await trySendFeedbackEmail(mailOptions);
         if (!emailOk) {
           console.warn(
-            'Feedback email could not be sent. Check SMTP/network/credentials.',
+            "Feedback email could not be sent. Check SMTP/network/credentials.",
           );
         }
       } else {
         console.warn(
-          'Skipping feedback email because email service is not configured.',
+          "Skipping feedback email because email service is not configured.",
         );
       }
 
       res.json({
         success: true,
-        message: 'General feedback submitted successfully.',
+        message: "General feedback submitted successfully.",
       });
-    } else if (type === 'bug') {
+    } else if (type === "bug") {
       // --- Bug Report Handler ---
       const { device, datetime, school, features, details } = data;
       const bugReportDoc = {
-        studentName: 'Anonymous',
-        userType: userType || 'Unknown',
+        studentName: "Anonymous",
+        userType: userType || "Unknown",
         device,
         datetime: new Date(datetime),
         school,
@@ -1565,19 +1694,19 @@ app.post('/submit-feedback', async (req, res) => {
 
       // 1. Save to database
       await client
-        .db('TrinityCapital')
-        .collection('BugReports')
+        .db("TrinityCapital")
+        .collection("BugReports")
         .insertOne(bugReportDoc);
 
       // 2. Send email (only if transporter is configured)
       if (feedbackTransporter) {
         const mailOptions = {
           from: `"Trinity Capital Bug Report" <${mailUser}>`,
-          to: 'trinitycapitalsim@gmail.com',
-          subject: `🚨 New Bug Report from a ${userType || 'user'}`,
+          to: "trinitycapitalsim@gmail.com",
+          subject: `🚨 New Bug Report from a ${userType || "user"}`,
           html: `
           <h3>Bug Report Submitted</h3>
-          <p><strong>User Type:</strong> ${userType || 'Unknown'}</p>
+          <p><strong>User Type:</strong> ${userType || "Unknown"}</p>
           <p><strong>Student:</strong> Anonymous</p>
           <p><strong>School:</strong> ${school}</p>
           <p><strong>Device:</strong> ${device}</p>
@@ -1591,18 +1720,18 @@ app.post('/submit-feedback', async (req, res) => {
         const emailOk = await trySendFeedbackEmail(mailOptions);
         if (!emailOk) {
           console.warn(
-            'Bug report email could not be sent. Check SMTP/network/credentials.',
+            "Bug report email could not be sent. Check SMTP/network/credentials.",
           );
         }
       } else {
         console.warn(
-          'Skipping feedback email because email service is not configured.',
+          "Skipping feedback email because email service is not configured.",
         );
       }
 
       res.json({
         success: true,
-        message: 'Bug report submitted successfully.',
+        message: "Bug report submitted successfully.",
       });
     } else {
       res
@@ -1610,12 +1739,79 @@ app.post('/submit-feedback', async (req, res) => {
         .json({ success: false, message: `Unknown feedback type: ${type}` });
     }
   } catch (error) {
-    console.error('Error processing feedback:', error);
+    console.error("Error processing feedback:", error);
     res.status(500).json({
       success: false,
-      message: 'An internal error occurred.',
+      message: "An internal error occurred.",
       details: error.message,
     });
+  }
+});
+
+/**************************************************TIMER ENDPOINTS*********************************************/
+
+// POST /api/timers - Save lesson timer
+app.post("/api/timers", async (req, res) => {
+  try {
+    const { studentId, lessonId, elapsedTime } = req.body;
+
+    if (!studentId || !lessonId || elapsedTime === undefined) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Upsert the timer document
+    const result = await client
+      .db("TrinityCapital")
+      .collection("LessonTimers")
+      .updateOne(
+        { studentId, lessonId },
+        {
+          $set: {
+            elapsedTime: elapsedTime,
+            lastUpdated: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+
+    console.log(
+      `Timer saved for student ${studentId}, lesson ${lessonId}: ${elapsedTime} seconds`,
+    );
+    res.json({ success: true, message: "Timer saved" });
+  } catch (error) {
+    console.error("Error saving timer:", error);
+    res.status(500).json({ error: "Failed to save timer" });
+  }
+});
+
+// GET /api/timers - Fetch lesson timer
+app.get("/api/timers", async (req, res) => {
+  try {
+    const { studentId, lessonId } = req.query;
+
+    if (!studentId || !lessonId) {
+      return res.status(400).json({ error: "Missing studentId or lessonId" });
+    }
+
+    const timerDoc = await client
+      .db("TrinityCapital")
+      .collection("LessonTimers")
+      .findOne({ studentId, lessonId });
+
+    if (timerDoc) {
+      console.log(
+        `Timer fetched for student ${studentId}, lesson ${lessonId}: ${timerDoc.elapsedTime} seconds`,
+      );
+      res.json({ elapsedTime: timerDoc.elapsedTime });
+    } else {
+      console.log(
+        `No timer found for student ${studentId}, lesson ${lessonId}`,
+      );
+      res.status(404).json({ error: "Timer not found" });
+    }
+  } catch (error) {
+    console.error("Error fetching timer:", error);
+    res.status(500).json({ error: "Failed to fetch timer" });
   }
 });
 
@@ -1627,7 +1823,7 @@ function calculateStudentHealth(student) {
     financial: 0,
     academic: 0,
     overall: 0,
-    status: 'Poor',
+    status: "Poor",
     details: {
       financialFactors: {},
       academicFactors: {},
@@ -1696,7 +1892,7 @@ function calculateStudentHealth(student) {
 
   // Bill management (20% of financial health)
   const bills = student.bills ?? [];
-  const activeBills = bills.filter(bill => bill.amount > 0).length;
+  const activeBills = bills.filter((bill) => bill.amount > 0).length;
   if (activeBills === 0) {
     financialScore += 20;
   } else if (activeBills <= 2) {
@@ -1777,65 +1973,65 @@ function calculateStudentHealth(student) {
 
   // Determine status
   if (health.overall >= 85) {
-    health.status = 'Excellent';
+    health.status = "Excellent";
   } else if (health.overall >= 70) {
-    health.status = 'Good';
+    health.status = "Good";
   } else if (health.overall >= 55) {
-    health.status = 'Fair';
+    health.status = "Fair";
   } else if (health.overall >= 40) {
-    health.status = 'Poor';
+    health.status = "Poor";
   } else {
-    health.status = 'Critical';
+    health.status = "Critical";
   }
 
   return health;
 }
 
-app.post('/lessonArrays', async (req, res) => {
+app.post("/lessonArrays", async (req, res) => {
   try {
     // In a real application, you would fetch this from a 'Lessons' collection in your database.
     // For now, we'll use a mock array that matches the structure in index.html.
     const lessons = [
-      { name: 'Tutorial', icon: 'fa-rocket rocketIcon', id: 'lesson1Div' },
-      { name: 'Transfers', icon: 'fa-money-bill-transfer', id: 'lesson2Div' },
+      { name: "Tutorial", icon: "fa-rocket rocketIcon", id: "lesson1Div" },
+      { name: "Transfers", icon: "fa-money-bill-transfer", id: "lesson2Div" },
       {
-        name: 'Bills & Paychecks',
-        icon: 'fa-file-invoice-dollar bpImg',
-        id: 'lesson3Div',
+        name: "Bills & Paychecks",
+        icon: "fa-file-invoice-dollar bpImg",
+        id: "lesson3Div",
       },
       {
-        name: 'Deposts',
-        icon: 'fa-money-check depositImg',
-        id: 'lesson4Div',
+        name: "Deposts",
+        icon: "fa-money-check depositImg",
+        id: "lesson4Div",
       },
-      { name: 'Sending Money', icon: 'fa-dollar-sign smImg', id: 'lesson5Div' },
+      { name: "Sending Money", icon: "fa-dollar-sign smImg", id: "lesson5Div" },
       {
-        name: 'Credit',
-        icon: 'fa-regular fa-credit-card creditImg',
-        id: 'lesson6Div',
+        name: "Credit",
+        icon: "fa-regular fa-credit-card creditImg",
+        id: "lesson6Div",
       },
     ];
 
     const htmlCode = lessons
       .map(
-        lesson => `
+        (lesson) => `
       <div class="col-1 lessonDiv ${lesson.id}">
         <p class="lessonImg"><i class="fa-solid ${lesson.icon}"></i></p>
         <h5 class="lessonName">${lesson.name}</h5>
       </div>`,
       )
-      .join('');
+      .join("");
 
-    io.emit('lessonHtml', htmlCode);
-    res.status(200).json({ message: 'Lesson HTML emitted successfully.' });
+    io.emit("lessonHtml", htmlCode);
+    res.status(200).json({ message: "Lesson HTML emitted successfully." });
   } catch (error) {
-    console.error('Error in /lessonArrays:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error in /lessonArrays:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
 // Handle lesson completion and update student profile
-app.post('/lesson-completion', async (req, res) => {
+app.post("/lesson-completion", async (req, res) => {
   try {
     const {
       studentName,
@@ -1858,8 +2054,8 @@ app.post('/lesson-completion', async (req, res) => {
 
     // Find and update the student's profile
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
 
     // Create the lesson completion record
     const lessonCompletion = {
@@ -1884,7 +2080,7 @@ app.post('/lesson-completion', async (req, res) => {
     if (!currentProfile) {
       return res.status(404).json({
         success: false,
-        error: 'Student profile not found',
+        error: "Student profile not found",
         message: `No profile found for student: ${studentName}`,
       });
     }
@@ -1897,11 +2093,11 @@ app.post('/lesson-completion', async (req, res) => {
       Math.round((newTotalScore / newTotalLessonsCompleted) * 100) / 100;
 
     // Calculate updated grade based on average score
-    let updatedGrade = 'F';
-    if (newAverageScore >= 90) updatedGrade = 'A';
-    else if (newAverageScore >= 80) updatedGrade = 'B';
-    else if (newAverageScore >= 70) updatedGrade = 'C';
-    else if (newAverageScore >= 60) updatedGrade = 'D';
+    let updatedGrade = "F";
+    if (newAverageScore >= 90) updatedGrade = "A";
+    else if (newAverageScore >= 80) updatedGrade = "B";
+    else if (newAverageScore >= 70) updatedGrade = "C";
+    else if (newAverageScore >= 60) updatedGrade = "D";
 
     console.log(`📊 Updated stats for ${studentName}:`, {
       totalLessonsCompleted: newTotalLessonsCompleted,
@@ -1931,7 +2127,7 @@ app.post('/lesson-completion', async (req, res) => {
     if (updateResult.matchedCount === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Student profile not found during update',
+        error: "Student profile not found during update",
         message: `Failed to update profile for student: ${studentName}`,
       });
     }
@@ -1949,7 +2145,7 @@ app.post('/lesson-completion', async (req, res) => {
       console.log(`📡 Emitting dashboard updates for teacher: ${teacherName}`);
 
       // Emit student progress update to teacher dashboards
-      io.emit('studentProgressUpdate', {
+      io.emit("studentProgressUpdate", {
         studentName: studentName,
         teacherName: teacherName,
         classPeriod: classPeriod,
@@ -1962,15 +2158,15 @@ app.post('/lesson-completion', async (req, res) => {
       });
 
       // Emit class health update to trigger dashboard refresh
-      io.emit('classHealthUpdate', {
+      io.emit("classHealthUpdate", {
         teacherName: teacherName,
         studentName: studentName,
-        updateType: 'lesson_completion',
+        updateType: "lesson_completion",
         timestamp: new Date(),
       });
 
       // Emit specific student lesson completion event
-      io.emit('lessonCompleted', {
+      io.emit("lessonCompleted", {
         studentName: studentName,
         lessonId: lessonId,
         lessonTitle: lessonTitle,
@@ -1986,7 +2182,7 @@ app.post('/lesson-completion', async (req, res) => {
     // Also emit a direct update to the specific student
     const studentSocket = userSockets.get(studentName);
     if (studentSocket) {
-      studentSocket.emit('lessonCompletionConfirmed', {
+      studentSocket.emit("lessonCompletionConfirmed", {
         lessonTitle: lessonTitle,
         score: score,
         grade: updatedGrade,
@@ -1998,7 +2194,7 @@ app.post('/lesson-completion', async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Lesson completion saved successfully',
+      message: "Lesson completion saved successfully",
       data: {
         studentName,
         lessonTitle,
@@ -2011,10 +2207,10 @@ app.post('/lesson-completion', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('❌ Error saving lesson completion:', error);
+    console.error("❌ Error saving lesson completion:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to save lesson completion',
+      error: "Failed to save lesson completion",
       message: error.message,
     });
   }
@@ -2023,7 +2219,7 @@ app.post('/lesson-completion', async (req, res) => {
 /*****************************************NEW LESSON ENGINE API ENDPOINTS***************************************************/
 
 // Test endpoint to debug Jake Ferguson's data
-app.get('/api/debug-student/:studentId', async (req, res) => {
+app.get("/api/debug-student/:studentId", async (req, res) => {
   try {
     const { studentId } = req.params;
     const decodedStudentId = decodeURIComponent(studentId);
@@ -2031,8 +2227,8 @@ app.get('/api/debug-student/:studentId', async (req, res) => {
     console.log(`🔍 DEBUG: Checking data for student: ${decodedStudentId}`);
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
 
     // Find student profile by memberName
     const studentProfile = await userProfilesCollection.findOne({
@@ -2056,7 +2252,7 @@ app.get('/api/debug-student/:studentId', async (req, res) => {
       return res.json({
         found: false,
         searchedFor: decodedStudentId,
-        existingStudents: allStudents.map(s => s.memberName),
+        existingStudents: allStudents.map((s) => s.memberName),
       });
     }
 
@@ -2078,13 +2274,13 @@ app.get('/api/debug-student/:studentId', async (req, res) => {
       ),
     });
   } catch (error) {
-    console.error('❌ DEBUG Error:', error);
-    res.status(500).json({ error: 'Debug failed', details: error.message });
+    console.error("❌ DEBUG Error:", error);
+    res.status(500).json({ error: "Debug failed", details: error.message });
   }
 });
 
 // Get current active lesson for a student
-app.get('/api/student-current-lesson/:studentId', async (req, res) => {
+app.get("/api/student-current-lesson/:studentId", async (req, res) => {
   try {
     const { studentId } = req.params;
     const decodedStudentId = decodeURIComponent(studentId);
@@ -2092,8 +2288,8 @@ app.get('/api/student-current-lesson/:studentId', async (req, res) => {
     console.log(`🔍 Fetching current lesson for student: ${decodedStudentId}`);
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
 
     // Find student profile by memberName (actual student name)
     const studentProfile = await userProfilesCollection.findOne({
@@ -2102,7 +2298,7 @@ app.get('/api/student-current-lesson/:studentId', async (req, res) => {
 
     if (!studentProfile) {
       console.log(`❌ Student not found: ${decodedStudentId}`);
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
 
     console.log(`✅ Found student profile for: ${decodedStudentId}`);
@@ -2125,7 +2321,7 @@ app.get('/api/student-current-lesson/:studentId', async (req, res) => {
 
       // Get all lesson IDs from assigned units
       let allLessonIds = [];
-      assignedUnitIds.forEach(unitAssignment => {
+      assignedUnitIds.forEach((unitAssignment) => {
         if (
           unitAssignment.lessonIds &&
           Array.isArray(unitAssignment.lessonIds)
@@ -2142,21 +2338,21 @@ app.get('/api/student-current-lesson/:studentId', async (req, res) => {
         console.log(`📝 Trying to fetch lesson with ID: ${currentLessonId}`);
 
         // Load Dallas Fed lesson data
-        const fs = require('fs');
-        const path = require('path');
+        const fs = require("fs");
+        const path = require("path");
         let dallasFedLessons = [];
         try {
           const lessonDataPath = path.join(
             __dirname,
-            'dallas_fed_aligned_lessons.json',
+            "dallas_fed_aligned_lessons.json",
           );
           const lessonData = JSON.parse(
-            fs.readFileSync(lessonDataPath, 'utf8'),
+            fs.readFileSync(lessonDataPath, "utf8"),
           );
           dallasFedLessons = lessonData.lessons || [];
         } catch (error) {
           console.log(
-            '⚠️ Could not load Dallas Fed lesson data, using fallback titles',
+            "⚠️ Could not load Dallas Fed lesson data, using fallback titles",
           );
         }
 
@@ -2174,45 +2370,45 @@ app.get('/api/student-current-lesson/:studentId', async (req, res) => {
           _id: currentLessonId,
           lesson_title: lessonTitle,
           lesson_description: lessonDescription,
-          lesson_type: 'interactive',
+          lesson_type: "interactive",
           lesson_blocks: [
             {
-              type: 'instruction',
+              type: "instruction",
               content:
                 dallasFedLesson?.lesson_description ||
                 `This is lesson ${lessonIndex + 1} from the Dallas Fed curriculum.`,
             },
             {
-              type: 'action',
-              content: 'Complete the financial tasks as instructed.',
+              type: "action",
+              content: "Complete the financial tasks as instructed.",
             },
             {
-              type: 'condition_check',
+              type: "condition_check",
               content:
-                'Your progress will be tracked automatically as you complete banking activities.',
+                "Your progress will be tracked automatically as you complete banking activities.",
             },
           ],
           lesson_conditions: dallasFedLesson?.lesson_conditions || [
             {
-              type: 'balance_check',
+              type: "balance_check",
               target: 100,
-              description: 'Maintain account balance above $100',
+              description: "Maintain account balance above $100",
             },
             {
-              type: 'transaction_count',
+              type: "transaction_count",
               target: 3,
-              description: 'Complete at least 3 transactions',
+              description: "Complete at least 3 transactions",
             },
           ],
           intro_text_blocks: [
             {
-              type: 'intro',
+              type: "intro",
               content: `Welcome to ${lessonTitle}! In this lesson, you'll learn about managing your finances effectively.`,
             },
           ],
-          teacher: 'admin@trinity-capital.net',
-          unit: dallasFedLesson?.unit || 'unit1',
-          unitName: dallasFedLesson?.unit || 'Unit 1: Earning and Spending',
+          teacher: "admin@trinity-capital.net",
+          unit: dallasFedLesson?.unit || "unit1",
+          unitName: dallasFedLesson?.unit || "Unit 1: Earning and Spending",
           lessonNumber: lessonIndex + 1,
           isAvailable: true,
           isCompleted: false,
@@ -2309,8 +2505,8 @@ app.get('/api/student-current-lesson/:studentId', async (req, res) => {
 
       try {
         const lessonsCollection = client
-          .db('TrinityCapital')
-          .collection('Lessons');
+          .db("TrinityCapital")
+          .collection("Lessons");
         const currentLesson = await lessonsCollection.findOne({
           _id: new ObjectId(currentLessonId),
         });
@@ -2333,13 +2529,13 @@ app.get('/api/student-current-lesson/:studentId', async (req, res) => {
     );
     return res.json(null);
   } catch (error) {
-    console.error('❌ Error fetching current lesson:', error);
-    res.status(500).json({ error: 'Failed to fetch current lesson' });
+    console.error("❌ Error fetching current lesson:", error);
+    res.status(500).json({ error: "Failed to fetch current lesson" });
   }
 });
 
 // Get student financial data for condition evaluation
-app.get('/api/student-financial-data/:studentId', async (req, res) => {
+app.get("/api/student-financial-data/:studentId", async (req, res) => {
   try {
     const { studentId } = req.params;
     const decodedStudentId = decodeURIComponent(studentId);
@@ -2347,15 +2543,15 @@ app.get('/api/student-financial-data/:studentId', async (req, res) => {
     console.log(`💰 Getting financial data for student: ${decodedStudentId}`);
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
     const studentProfile = await userProfilesCollection.findOne({
       memberName: decodedStudentId,
     });
 
     if (!studentProfile) {
       console.log(`❌ Student not found: ${decodedStudentId}`);
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
 
     // Calculate financial data from student profile
@@ -2390,7 +2586,7 @@ app.get('/api/student-financial-data/:studentId', async (req, res) => {
       lessonStartTime: studentProfile.lessonStartTime || Date.now(),
       bills: bills.length,
       income: payments.length,
-      currentAccount: studentProfile.currentAccount || 'checking',
+      currentAccount: studentProfile.currentAccount || "checking",
     };
 
     console.log(`💰 Financial data for ${decodedStudentId}:`, {
@@ -2403,25 +2599,25 @@ app.get('/api/student-financial-data/:studentId', async (req, res) => {
 
     res.json(financialData);
   } catch (error) {
-    console.error('❌ Error fetching student financial data:', error);
-    res.status(500).json({ error: 'Failed to fetch financial data' });
+    console.error("❌ Error fetching student financial data:", error);
+    res.status(500).json({ error: "Failed to fetch financial data" });
   }
 });
 
 // Check lesson access (lesson gating)
-app.get('/api/lesson-access/:studentId/:lessonId', async (req, res) => {
+app.get("/api/lesson-access/:studentId/:lessonId", async (req, res) => {
   try {
     const { studentId, lessonId } = req.params;
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
     const studentProfile = await userProfilesCollection.findOne({
       memberName: studentId,
     });
 
     if (!studentProfile) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
 
     // Check if student has access to this lesson
@@ -2430,7 +2626,7 @@ app.get('/api/lesson-access/:studentId/:lessonId', async (req, res) => {
 
     const hasAccess = assignedLessonIds.includes(lessonId);
     const isCompleted = completedLessonIds.some(
-      completed => completed.lessonId === lessonId,
+      (completed) => completed.lessonId === lessonId,
     );
 
     // For lesson gating, check if previous lessons are completed
@@ -2445,40 +2641,40 @@ app.get('/api/lesson-access/:studentId/:lessonId', async (req, res) => {
       lessonIndex,
     });
   } catch (error) {
-    console.error('❌ Error checking lesson access:', error);
-    res.status(500).json({ error: 'Failed to check lesson access' });
+    console.error("❌ Error checking lesson access:", error);
+    res.status(500).json({ error: "Failed to check lesson access" });
   }
 });
 
 // Get lesson data by ID
-app.get('/api/lesson/:lessonId', async (req, res) => {
+app.get("/api/lesson/:lessonId", async (req, res) => {
   try {
     const { lessonId } = req.params;
 
-    const lessonsCollection = client.db('TrinityCapital').collection('Lessons');
+    const lessonsCollection = client.db("TrinityCapital").collection("Lessons");
     const lesson = await lessonsCollection.findOne({
       _id: new ObjectId(lessonId),
     });
 
     if (!lesson) {
-      return res.status(404).json({ error: 'Lesson not found' });
+      return res.status(404).json({ error: "Lesson not found" });
     }
 
     res.json(lesson);
   } catch (error) {
-    console.error('❌ Error fetching lesson:', error);
-    res.status(500).json({ error: 'Failed to fetch lesson' });
+    console.error("❌ Error fetching lesson:", error);
+    res.status(500).json({ error: "Failed to fetch lesson" });
   }
 });
 
 // Lock lesson for student
-app.post('/api/lock-lesson', async (req, res) => {
+app.post("/api/lock-lesson", async (req, res) => {
   try {
     const { studentId, lessonId } = req.body;
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
 
     await userProfilesCollection.updateOne(
       { memberName: studentId },
@@ -2488,27 +2684,27 @@ app.post('/api/lock-lesson', async (req, res) => {
       },
     );
 
-    res.json({ success: true, message: 'Lesson locked successfully' });
+    res.json({ success: true, message: "Lesson locked successfully" });
   } catch (error) {
-    console.error('❌ Error locking lesson:', error);
-    res.status(500).json({ error: 'Failed to lock lesson' });
+    console.error("❌ Error locking lesson:", error);
+    res.status(500).json({ error: "Failed to lock lesson" });
   }
 });
 
 // Unlock next lesson for student
-app.post('/api/unlock-next-lesson', async (req, res) => {
+app.post("/api/unlock-next-lesson", async (req, res) => {
   try {
     const { studentId, currentLessonId } = req.body;
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
     const studentProfile = await userProfilesCollection.findOne({
       memberName: studentId,
     });
 
     if (!studentProfile) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
 
     const assignedLessonIds = studentProfile.lessonIds || [];
@@ -2528,31 +2724,31 @@ app.post('/api/unlock-next-lesson', async (req, res) => {
       res.json({
         success: true,
         nextLessonId,
-        message: 'Next lesson unlocked',
+        message: "Next lesson unlocked",
       });
     } else {
-      res.json({ success: true, message: 'No more lessons to unlock' });
+      res.json({ success: true, message: "No more lessons to unlock" });
     }
   } catch (error) {
-    console.error('❌ Error unlocking next lesson:', error);
-    res.status(500).json({ error: 'Failed to unlock next lesson' });
+    console.error("❌ Error unlocking next lesson:", error);
+    res.status(500).json({ error: "Failed to unlock next lesson" });
   }
 });
 
 // Sync lesson completion with teacher dashboard
-app.post('/api/sync-teacher-dashboard', async (req, res) => {
+app.post("/api/sync-teacher-dashboard", async (req, res) => {
   try {
     const { studentId, lessonId, grade, conditionsData } = req.body;
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
     const studentProfile = await userProfilesCollection.findOne({
       memberName: studentId,
     });
 
     if (!studentProfile) {
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
 
     // Update student's completed lessons
@@ -2561,7 +2757,7 @@ app.post('/api/sync-teacher-dashboard', async (req, res) => {
       grade,
       completedDate: new Date(),
       conditionsData,
-      studentHealth: studentProfile.studentHealth || 'healthy',
+      studentHealth: studentProfile.studentHealth || "healthy",
     };
 
     await userProfilesCollection.updateOne(
@@ -2570,23 +2766,23 @@ app.post('/api/sync-teacher-dashboard', async (req, res) => {
         $addToSet: { completedLessons: completionRecord },
         $set: {
           lastLessonCompleted: new Date(),
-          studentHealth: grade >= 70 ? 'healthy' : 'needs_attention',
+          studentHealth: grade >= 70 ? "healthy" : "needs_attention",
         },
       },
     );
 
     res.json({
       success: true,
-      message: 'Teacher dashboard synced successfully',
+      message: "Teacher dashboard synced successfully",
     });
   } catch (error) {
-    console.error('❌ Error syncing teacher dashboard:', error);
-    res.status(500).json({ error: 'Failed to sync teacher dashboard' });
+    console.error("❌ Error syncing teacher dashboard:", error);
+    res.status(500).json({ error: "Failed to sync teacher dashboard" });
   }
 });
 
 // Get available lessons for student
-app.get('/api/student-lessons/:studentId', async (req, res) => {
+app.get("/api/student-lessons/:studentId", async (req, res) => {
   try {
     const { studentId } = req.params;
     const decodedStudentId = decodeURIComponent(studentId);
@@ -2594,8 +2790,8 @@ app.get('/api/student-lessons/:studentId', async (req, res) => {
     console.log(`📚 Fetching lessons for student: ${decodedStudentId}`);
 
     const userProfilesCollection = client
-      .db('TrinityCapital')
-      .collection('User Profiles');
+      .db("TrinityCapital")
+      .collection("User Profiles");
 
     const studentProfile = await userProfilesCollection.findOne({
       memberName: decodedStudentId,
@@ -2603,7 +2799,7 @@ app.get('/api/student-lessons/:studentId', async (req, res) => {
 
     if (!studentProfile) {
       console.log(`❌ Student not found: ${decodedStudentId}`);
-      return res.status(404).json({ error: 'Student not found' });
+      return res.status(404).json({ error: "Student not found" });
     }
 
     let allLessons = [];
@@ -2615,7 +2811,7 @@ app.get('/api/student-lessons/:studentId', async (req, res) => {
 
       // Get all lesson IDs from assigned units
       let allLessonIds = [];
-      assignedUnitIds.forEach(unitAssignment => {
+      assignedUnitIds.forEach((unitAssignment) => {
         if (
           unitAssignment.lessonIds &&
           Array.isArray(unitAssignment.lessonIds)
@@ -2632,19 +2828,19 @@ app.get('/api/student-lessons/:studentId', async (req, res) => {
       );
 
       // Load Dallas Fed lesson data
-      const fs = require('fs');
-      const path = require('path');
+      const fs = require("fs");
+      const path = require("path");
       let dallasFedLessons = [];
       try {
         const lessonDataPath = path.join(
           __dirname,
-          'dallas_fed_aligned_lessons.json',
+          "dallas_fed_aligned_lessons.json",
         );
-        const lessonData = JSON.parse(fs.readFileSync(lessonDataPath, 'utf8'));
+        const lessonData = JSON.parse(fs.readFileSync(lessonDataPath, "utf8"));
         dallasFedLessons = lessonData.lessons || [];
       } catch (error) {
         console.log(
-          '⚠️ Could not load Dallas Fed lesson data, using fallback titles',
+          "⚠️ Could not load Dallas Fed lesson data, using fallback titles",
         );
       }
 
@@ -2661,35 +2857,35 @@ app.get('/api/student-lessons/:studentId', async (req, res) => {
           _id: lessonId,
           lesson_title: lessonTitle,
           lesson_description: lessonDescription,
-          lesson_type: 'interactive',
+          lesson_type: "interactive",
           lesson_blocks: [
             {
-              type: 'instruction',
+              type: "instruction",
               content:
                 dallasFedLesson?.lesson_description ||
                 `This is lesson ${index + 1} from the Dallas Fed curriculum.`,
             },
             {
-              type: 'action',
-              content: 'Complete the financial tasks as instructed.',
+              type: "action",
+              content: "Complete the financial tasks as instructed.",
             },
           ],
           lesson_conditions: dallasFedLesson?.lesson_conditions || [
             {
-              type: 'balance_check',
+              type: "balance_check",
               target: 100,
-              description: 'Maintain account balance',
+              description: "Maintain account balance",
             },
           ],
           intro_text_blocks: [
             {
-              type: 'intro',
+              type: "intro",
               content: `Welcome to ${lessonTitle}!`,
             },
           ],
-          teacher: 'admin@trinity-capital.net',
-          unit: dallasFedLesson?.unit || 'unit1',
-          unitName: dallasFedLesson?.unit || 'Unit 1: Earning and Spending',
+          teacher: "admin@trinity-capital.net",
+          unit: dallasFedLesson?.unit || "unit1",
+          unitName: dallasFedLesson?.unit || "Unit 1: Earning and Spending",
           lessonNumber: index + 1,
           isAvailable: true,
           isCompleted: false,
@@ -2706,16 +2902,16 @@ app.get('/api/student-lessons/:studentId', async (req, res) => {
 
       try {
         const lessonsCollection = client
-          .db('TrinityCapital')
-          .collection('Lessons');
+          .db("TrinityCapital")
+          .collection("Lessons");
         const lessons = await lessonsCollection
           .find({
-            _id: { $in: assignedLessonIds.map(id => new ObjectId(id)) },
+            _id: { $in: assignedLessonIds.map((id) => new ObjectId(id)) },
           })
           .toArray();
         allLessons = lessons;
       } catch (error) {
-        console.warn('Could not fetch legacy lessons:', error.message);
+        console.warn("Could not fetch legacy lessons:", error.message);
       }
     }
 
@@ -2724,30 +2920,30 @@ app.get('/api/student-lessons/:studentId', async (req, res) => {
     );
     res.json(allLessons);
   } catch (error) {
-    console.error('❌ Error fetching student lessons:', error);
-    res.status(500).json({ error: 'Failed to fetch student lessons' });
+    console.error("❌ Error fetching student lessons:", error);
+    res.status(500).json({ error: "Failed to fetch student lessons" });
   }
 });
 
 /*****************************************END NEW LESSON ENGINE API ENDPOINTS***************************************************/
 
 // Replace lesson in unit endpoint
-app.post('/replaceLessonInUnit', async (req, res) => {
+app.post("/replaceLessonInUnit", async (req, res) => {
   try {
     const { teacherName, unitValue, oldLessonId, newLessonId } = req.body;
 
     // Debug logging
-    console.log('Replace lesson request received:');
-    console.log('teacherName:', teacherName);
-    console.log('unitValue:', unitValue, 'type:', typeof unitValue);
-    console.log('oldLessonId:', oldLessonId, 'type:', typeof oldLessonId);
-    console.log('newLessonId:', newLessonId, 'type:', typeof newLessonId);
+    console.log("Replace lesson request received:");
+    console.log("teacherName:", teacherName);
+    console.log("unitValue:", unitValue, "type:", typeof unitValue);
+    console.log("oldLessonId:", oldLessonId, "type:", typeof oldLessonId);
+    console.log("newLessonId:", newLessonId, "type:", typeof newLessonId);
 
     if (!teacherName || !unitValue || !oldLessonId || !newLessonId) {
       return res.status(400).json({
         success: false,
         message:
-          'Missing required parameters: teacherName, unitValue, oldLessonId, newLessonId',
+          "Missing required parameters: teacherName, unitValue, oldLessonId, newLessonId",
       });
     }
 
@@ -2758,52 +2954,52 @@ app.post('/replaceLessonInUnit', async (req, res) => {
 
     // Validate new lesson ObjectId
     if (!isValidObjectId(newLessonId)) {
-      console.log('Invalid newLessonId format:', newLessonId);
+      console.log("Invalid newLessonId format:", newLessonId);
       return res.status(400).json({
         success: false,
-        message: 'Invalid newLessonId format',
+        message: "Invalid newLessonId format",
       });
     }
 
     // Get the old lesson details from the Lessons collection to find the title
     const oldLesson = await client
-      .db('TrinityCapital')
-      .collection('Lessons')
+      .db("TrinityCapital")
+      .collection("Lessons")
       .findOne({ _id: new ObjectId(oldLessonId) });
 
     if (!oldLesson) {
       return res.status(404).json({
         success: false,
-        message: 'Old lesson not found',
+        message: "Old lesson not found",
       });
     }
 
     // Get the new lesson details from the Lessons collection
     const newLesson = await client
-      .db('TrinityCapital')
-      .collection('Lessons')
+      .db("TrinityCapital")
+      .collection("Lessons")
       .findOne({ _id: new ObjectId(newLessonId) });
 
     if (!newLesson) {
       return res.status(404).json({
         success: false,
-        message: 'New lesson not found',
+        message: "New lesson not found",
       });
     }
 
     // Update the lesson in the teacher's document using lesson title for matching
     const updateResult = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .updateOne(
         {
           name: teacherName,
-          'units.value': unitValue,
-          'units.lessons.lesson_title': oldLesson.lesson.lesson_title,
+          "units.value": unitValue,
+          "units.lessons.lesson_title": oldLesson.lesson.lesson_title,
         },
         {
           $set: {
-            'units.$[unit].lessons.$[lesson]': {
+            "units.$[unit].lessons.$[lesson]": {
               lesson_title: newLesson.lesson.lesson_title,
               intro_text_blocks: newLesson.lesson.intro_text_blocks,
               conditions: newLesson.lesson.conditions,
@@ -2812,8 +3008,8 @@ app.post('/replaceLessonInUnit', async (req, res) => {
         },
         {
           arrayFilters: [
-            { 'unit.value': unitValue },
-            { 'lesson.lesson_title': oldLesson.lesson.lesson_title },
+            { "unit.value": unitValue },
+            { "lesson.lesson_title": oldLesson.lesson.lesson_title },
           ],
         },
       );
@@ -2821,7 +3017,7 @@ app.post('/replaceLessonInUnit', async (req, res) => {
     if (updateResult.matchedCount === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Teacher, unit, or lesson not found for replacement',
+        message: "Teacher, unit, or lesson not found for replacement",
       });
     }
 
@@ -2830,7 +3026,7 @@ app.post('/replaceLessonInUnit', async (req, res) => {
     );
 
     // --- Emit Socket.IO event to update lesson management modal ---
-    io.emit('lessonReplaced', {
+    io.emit("lessonReplaced", {
       teacherName: teacherName,
       unitValue: unitValue,
       oldLesson: {
@@ -2845,52 +3041,52 @@ app.post('/replaceLessonInUnit', async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Lesson replaced successfully',
+      message: "Lesson replaced successfully",
       replacedLesson: {
         _id: newLessonId,
         lesson_title: newLesson.lesson.lesson_title,
       },
     });
   } catch (error) {
-    console.error('Error replacing lesson in unit:', error);
+    console.error("Error replacing lesson in unit:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
+      message: "Internal server error",
       error: error.message,
     });
   }
 });
 
 // Save unit changes endpoint
-app.post('/saveUnitChanges', async (req, res) => {
+app.post("/saveUnitChanges", async (req, res) => {
   try {
     const { teacherName, unitValue, lessons } = req.body;
 
     // Debug logging
-    console.log('Save unit changes request received:');
-    console.log('teacherName:', teacherName);
-    console.log('unitValue:', unitValue);
-    console.log('lessons:', lessons);
+    console.log("Save unit changes request received:");
+    console.log("teacherName:", teacherName);
+    console.log("unitValue:", unitValue);
+    console.log("lessons:", lessons);
 
     if (!teacherName || !unitValue || !Array.isArray(lessons)) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required parameters: teacherName, unitValue, lessons',
+        message: "Missing required parameters: teacherName, unitValue, lessons",
       });
     }
 
     // Update the unit's lessons in the teacher's document
     const updateResult = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .updateOne(
         {
           name: teacherName,
-          'units.value': unitValue,
+          "units.value": unitValue,
         },
         {
           $set: {
-            'units.$.lessons': lessons,
+            "units.$.lessons": lessons,
           },
         },
       );
@@ -2898,14 +3094,14 @@ app.post('/saveUnitChanges', async (req, res) => {
     if (updateResult.matchedCount === 0) {
       return res.status(404).json({
         success: false,
-        message: 'Teacher or unit not found',
+        message: "Teacher or unit not found",
       });
     }
 
     if (updateResult.modifiedCount === 0) {
       return res.status(200).json({
         success: true,
-        message: 'No changes were made to the unit',
+        message: "No changes were made to the unit",
       });
     }
 
@@ -2914,7 +3110,7 @@ app.post('/saveUnitChanges', async (req, res) => {
     );
 
     // --- Emit Socket.IO event to update lesson management modal ---
-    io.emit('unitSaved', {
+    io.emit("unitSaved", {
       teacherName: teacherName,
       unitValue: unitValue,
       lessons: lessons,
@@ -2922,59 +3118,59 @@ app.post('/saveUnitChanges', async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: 'Unit changes saved successfully',
+      message: "Unit changes saved successfully",
       unitValue: unitValue,
       lessonsCount: lessons.length,
     });
   } catch (error) {
-    console.error('Error saving unit changes:', error);
+    console.error("Error saving unit changes:", error);
     res.status(500).json({
       success: false,
-      message: 'Internal server error',
+      message: "Internal server error",
       error: error.message,
     });
   }
 });
 
 // --- SMTP CONFIG ENCRYPTION UTILS ---
-const SMTP_SECRET = process.env.SMTP_SECRET || 'changeme!';
+const SMTP_SECRET = process.env.SMTP_SECRET || "changeme!";
 function getKey() {
   // Always return a Buffer of exactly 32 bytes
-  return Buffer.alloc(32, SMTP_SECRET, 'utf8');
+  return Buffer.alloc(32, SMTP_SECRET, "utf8");
 }
 function encrypt(text) {
   const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv('aes-256-cbc', getKey(), iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
-  return iv.toString('hex') + ':' + encrypted;
+  const cipher = crypto.createCipheriv("aes-256-cbc", getKey(), iv);
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  return iv.toString("hex") + ":" + encrypted;
 }
 function decrypt(text) {
-  const [ivHex, encrypted] = text.split(':');
-  const iv = Buffer.from(ivHex, 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', getKey(), iv);
-  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
+  const [ivHex, encrypted] = text.split(":");
+  const iv = Buffer.from(ivHex, "hex");
+  const decipher = crypto.createDecipheriv("aes-256-cbc", getKey(), iv);
+  let decrypted = decipher.update(encrypted, "hex", "utf8");
+  decrypted += decipher.final("utf8");
   return decrypted;
 }
 
 // --- SAVE SMTP CONFIG ---
-app.post('/saveSmtpConfig', async (req, res) => {
+app.post("/saveSmtpConfig", async (req, res) => {
   const { teacherUsername, config } = req.body;
   if (!teacherUsername || !config)
-    return res.status(400).json({ error: 'Missing teacherUsername or config' });
+    return res.status(400).json({ error: "Missing teacherUsername or config" });
   try {
     const toSave = { ...config };
     if (toSave.smtpPassword) toSave.smtpPassword = encrypt(toSave.smtpPassword);
     await client
-      .db('TrinityCapital')
-      .collection('SmtpConfigs')
+      .db("TrinityCapital")
+      .collection("SmtpConfigs")
       .updateOne({ teacherUsername }, { $set: toSave }, { upsert: true });
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error('Failed to save SMTP config:', err);
+    console.error("Failed to save SMTP config:", err);
     res.status(500).json({
-      error: 'Failed to save SMTP config',
+      error: "Failed to save SMTP config",
       details: err.message,
       stack: err.stack,
     });
@@ -2982,37 +3178,37 @@ app.post('/saveSmtpConfig', async (req, res) => {
 });
 
 // --- GET SMTP CONFIG (no password) ---
-app.get('/getSmtpConfig/:teacherUsername', async (req, res) => {
+app.get("/getSmtpConfig/:teacherUsername", async (req, res) => {
   const { teacherUsername } = req.params;
   if (!teacherUsername)
-    return res.status(400).json({ error: 'Missing teacherUsername' });
+    return res.status(400).json({ error: "Missing teacherUsername" });
   try {
     const doc = await client
-      .db('TrinityCapital')
-      .collection('SmtpConfigs')
+      .db("TrinityCapital")
+      .collection("SmtpConfigs")
       .findOne({ teacherUsername });
     if (!doc) return res.status(200).json({});
     const { smtpPassword, ...rest } = doc;
     res.status(200).json(rest);
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch SMTP config' });
+    res.status(500).json({ error: "Failed to fetch SMTP config" });
   }
 });
 
 /****************************************TEACHER DASHBOARD********************************************/
 
-app.post('/findTeacher', async (req, res) => {
+app.post("/findTeacher", async (req, res) => {
   const { parcel } = req.body;
   const teachUser = parcel[0];
   const teachPin = parcel[1];
 
-  console.log('teachUser:', teachUser);
-  console.log('teachPin:', teachPin);
+  console.log("teachUser:", teachUser);
+  console.log("teachPin:", teachPin);
 
   try {
     let teacher = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .findOne({ username: teachUser, pin: teachPin });
 
     if (teacher !== null) {
@@ -3030,64 +3226,64 @@ app.post('/findTeacher', async (req, res) => {
       res.status(404).json({ found: false });
     }
   } catch (error) {
-    console.error('Error in /findTeacher:', error);
-    res.status(500).json({ error: 'Internal Server Error' });
+    console.error("Error in /findTeacher:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
-app.post('/getStudents', async (req, res) => {
+app.post("/getStudents", async (req, res) => {
   const { parcel } = req.body;
 
   const periodNum = parcel[0];
   const teacherName = parcel[1];
 
-  console.log('Period Number:', periodNum);
-  console.log('Teacher Name:', teacherName);
+  console.log("Period Number:", periodNum);
+  console.log("Teacher Name:", teacherName);
 
   let students = await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .find({ classPeriod: periodNum, teacher: teacherName })
     .toArray();
 
-  io.emit('students', students);
+  io.emit("students", students);
 });
 
 // Get student financial profiles for class health dashboard
-app.get('/students/profiles/:teacherUsername', async (req, res) => {
+app.get("/students/profiles/:teacherUsername", async (req, res) => {
   try {
     const { teacherUsername } = req.params;
 
     console.log(
-      'Fetching student profiles for teacher username:',
+      "Fetching student profiles for teacher username:",
       teacherUsername,
     );
 
     // First, find the teacher's name from the Teachers collection
     const teacherDoc = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .findOne({ username: teacherUsername });
 
     if (!teacherDoc) {
-      console.log('Teacher not found for username:', teacherUsername);
+      console.log("Teacher not found for username:", teacherUsername);
       return res.status(404).json({
         success: false,
-        error: 'Teacher not found',
+        error: "Teacher not found",
         details: `No teacher found with username: ${teacherUsername}`,
       });
     }
 
     const teacherName = teacherDoc.name;
-    console.log('Found teacher name:', teacherName);
+    console.log("Found teacher name:", teacherName);
 
     // Find all students assigned to this teacher using the teacher's name
     const studentProfiles = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .find({
         teacher: teacherDoc.name, // Use teacher's name, not username
-        role: { $ne: 'teacher' }, // Exclude teacher profiles
+        role: { $ne: "teacher" }, // Exclude teacher profiles
       })
       .project({
         // Include only necessary fields for health calculation
@@ -3121,7 +3317,7 @@ app.get('/students/profiles/:teacherUsername', async (req, res) => {
     );
 
     // Calculate health metrics for each student
-    const studentsWithHealth = studentProfiles.map(student => {
+    const studentsWithHealth = studentProfiles.map((student) => {
       const health = calculateStudentHealth(student);
       return {
         ...student,
@@ -3135,17 +3331,17 @@ app.get('/students/profiles/:teacherUsername', async (req, res) => {
       count: studentsWithHealth.length,
     });
   } catch (error) {
-    console.error('Error fetching student profiles:', error);
+    console.error("Error fetching student profiles:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch student profiles',
+      error: "Failed to fetch student profiles",
       details: error.message,
     });
   }
 });
 
 // Get real-time class health update for a specific teacher
-app.get('/class-health/:teacherUsername', async (req, res) => {
+app.get("/class-health/:teacherUsername", async (req, res) => {
   try {
     const { teacherUsername } = req.params;
 
@@ -3155,14 +3351,14 @@ app.get('/class-health/:teacherUsername', async (req, res) => {
 
     // Find the teacher's name from the Teachers collection
     const teacherDoc = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .findOne({ username: teacherUsername });
 
     if (!teacherDoc) {
       return res.status(404).json({
         success: false,
-        error: 'Teacher not found',
+        error: "Teacher not found",
       });
     }
 
@@ -3170,23 +3366,23 @@ app.get('/class-health/:teacherUsername', async (req, res) => {
 
     // Get all students for this teacher
     const students = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .find({
         teacher: teacherName,
-        role: { $ne: 'teacher' },
+        role: { $ne: "teacher" },
       })
       .toArray();
 
     // Calculate health metrics for each student and class averages
-    const studentsWithHealth = students.map(student => {
+    const studentsWithHealth = students.map((student) => {
       const health = calculateStudentHealth(student);
       return {
         memberName: student.memberName,
-        firstName: student.firstName || student.memberName?.split(' ')[0] || '',
-        lastName: student.lastName || student.memberName?.split(' ')[1] || '',
+        firstName: student.firstName || student.memberName?.split(" ")[0] || "",
+        lastName: student.lastName || student.memberName?.split(" ")[1] || "",
         classPeriod: student.classPeriod,
-        grade: student.grade || 'F',
+        grade: student.grade || "F",
         health: health,
         totalLessonsCompleted: student.totalLessonsCompleted ?? 0,
         averageScore: student.averageScore ?? 0,
@@ -3249,13 +3445,13 @@ app.get('/class-health/:teacherUsername', async (req, res) => {
       );
 
       // Count health status distribution
-      studentsWithHealth.forEach(student => {
+      studentsWithHealth.forEach((student) => {
         classStats.healthDistribution[student.health.status]++;
       });
 
       // Count recent activity (last 7 days)
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-      classStats.recentActivity = studentsWithHealth.filter(student => {
+      classStats.recentActivity = studentsWithHealth.filter((student) => {
         if (!student.lastActivity) return false;
         return new Date(student.lastActivity) > sevenDaysAgo;
       }).length;
@@ -3274,10 +3470,10 @@ app.get('/class-health/:teacherUsername', async (req, res) => {
       timestamp: new Date(),
     });
   } catch (error) {
-    console.error('❌ Error fetching class health:', error);
+    console.error("❌ Error fetching class health:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch class health data',
+      error: "Failed to fetch class health data",
       details: error.message,
     });
   }
@@ -3289,11 +3485,11 @@ app.get('/class-health/:teacherUsername', async (req, res) => {
  * =================================================================
  * Fetches all messages for a given user (student or teacher) and groups them into threads.
  */
-app.get('/messages/:userId', async (req, res) => {
+app.get("/messages/:userId", async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {
-      return res.status(400).json({ error: 'User ID is required.' });
+      return res.status(400).json({ error: "User ID is required." });
     }
 
     let query = {
@@ -3302,8 +3498,8 @@ app.get('/messages/:userId', async (req, res) => {
 
     // If the userId is a teacher, also include their specific class message thread
     const teacherDoc = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .findOne({ name: userId });
     if (teacherDoc) {
       query = {
@@ -3315,22 +3511,85 @@ app.get('/messages/:userId', async (req, res) => {
     }
 
     const threads = await client
-      .db('TrinityCapital')
-      .collection('threads')
+      .db("TrinityCapital")
+      .collection("threads")
       .find(query)
       .sort({ lastMessageTimestamp: -1 }) // Sort by most recent activity
       .toArray();
 
     res.status(200).json({ threads }); // Return threads, not messages
   } catch (error) {
-    console.error('Error fetching messages:', error);
+    console.error("Error fetching messages:", error);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: error.message });
+      .json({ error: "Internal Server Error", details: error.message });
   }
 });
 
-app.post('/studentInfo', async (req, res) => {
+// Endpoint to create a new thread
+app.post("/newThread", async (req, res) => {
+  try {
+    const { participants } = req.body;
+
+    if (!participants || participants.length < 2) {
+      return res
+        .status(400)
+        .json({ error: "A thread requires at least two participants." });
+    }
+
+    // Create a canonical threadId by sorting participants
+    const sortedParticipants = participants.sort();
+    const threadId = sortedParticipants.join("_");
+
+    // Check if thread already exists
+    const existingThread = await client
+      .db("TrinityCapital")
+      .collection("threads")
+      .findOne({ threadId: threadId });
+
+    if (existingThread) {
+      return res
+        .status(200)
+        .json({ message: "Thread already exists.", thread: existingThread });
+    }
+
+    // Create new thread object
+    const newThread = {
+      threadId: threadId,
+      type: "private",
+      participants: sortedParticipants,
+      messages: [],
+      createdAt: new Date(),
+      lastMessageTimestamp: new Date(),
+    };
+
+    // Insert the new thread into the database
+    await client
+      .db("TrinityCapital")
+      .collection("threads")
+      .insertOne(newThread);
+
+    // Emit an event to notify clients (optional, but good for real-time updates)
+    // Notify both participants that a new thread has been created
+    sortedParticipants.forEach((participantId) => {
+      const userSocket = userSockets.get(participantId);
+      if (userSocket) {
+        userSocket.emit("threadCreated", newThread);
+      }
+    });
+
+    res
+      .status(201)
+      .json({ message: "Thread created successfully.", thread: newThread });
+  } catch (error) {
+    console.error("Error creating new thread:", error);
+    res
+      .status(500)
+      .json({ error: "Internal Server Error", details: error.message });
+  }
+});
+
+app.post("/studentInfo", async (req, res) => {
   const { parcel } = req.body;
   const studentName = parcel[0];
   const teacherName = parcel[1];
@@ -3339,33 +3598,33 @@ app.post('/studentInfo', async (req, res) => {
 
   try {
     let student = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .findOne({ memberName: studentName, teacher: teacherName });
 
     if (student) {
       res.json(student);
     } else {
-      res.status(404).send('Student not found');
+      res.status(404).send("Student not found");
     }
 
     console.log(student);
   } catch (error) {
-    console.error('Error fetching student info:', error);
-    res.status(500).send('Internal Server Error');
+    console.error("Error fetching student info:", error);
+    res.status(500).send("Internal Server Error");
   }
 });
 
-app.post('/classMessage', async (req, res) => {
+app.post("/classMessage", async (req, res) => {
   const { teacherName, message } = req.body;
   if (!teacherName || !message) {
-    return res.status(400).json({ error: 'Missing teacherName or message' });
+    return res.status(400).json({ error: "Missing teacherName or message" });
   }
 
   // Find all students with this teacher
   const students = await client
-    .db('TrinityCapital')
-    .collection('User Profiles')
+    .db("TrinityCapital")
+    .collection("User Profiles")
     .find({ teacher: teacherName })
     .toArray();
 
@@ -3373,17 +3632,17 @@ app.post('/classMessage', async (req, res) => {
   const dialogHtml = `<dialog open class="baseModal"><h1>Message from ${teacherName}</h1><p>${message}</p><button onclick="this.parentElement.close()">Close</button></dialog>`;
 
   // Broadcast to all connected students
-  students.forEach(student => {
+  students.forEach((student) => {
     const userSocket = userSockets.get(student.memberName);
     if (userSocket) {
-      userSocket.emit('classMessage', dialogHtml);
+      userSocket.emit("classMessage", dialogHtml);
     }
   });
 
   res.status(200).json({ success: true });
 });
 
-app.post('/generateClassCodes', async (req, res) => {
+app.post("/generateClassCodes", async (req, res) => {
   try {
     const [teacherUsername, teacherEmail, periods] = req.body.parcel || [];
     if (
@@ -3397,66 +3656,89 @@ app.post('/generateClassCodes', async (req, res) => {
       });
     }
 
-    console.log('Searching for teacherUsername:', teacherUsername);
-    // 1. Get teacher's state, school, and license number from Teachers collection
+    console.log("Searching for teacherUsername:", teacherUsername);
+    // 1. Get teacher's state, school, and access code from Teachers collection
     const teacher = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .findOne({ username: teacherUsername });
-    console.log('Teacher lookup result:', teacher);
+    console.log("Teacher lookup result:", teacher);
+    console.log(
+      "Teacher fields available:",
+      teacher ? Object.keys(teacher) : "No teacher found",
+    );
 
     if (!teacher) {
-      return res.status(404).json({ error: 'Teacher not found' });
+      return res.status(404).json({ error: "Teacher not found" });
     }
 
-    // Get the access code from Access Codes collection using teacherEmail
-    const accessCodeDoc = await client
-      .db('TrinityCapital')
-      .collection('Access Codes')
-      .findOne({ sent_to: teacherEmail });
-    console.log('Access code lookup result:', accessCodeDoc);
+    // 2. Decrypt the teacher's access code (stored encrypted as AES-256-CBC in the accessCode field)
+    console.log("Decrypting teacher's access code...");
+    console.log("  teacher.accessCode:", teacher.accessCode);
 
-    let licenseNumber = '00000000';
-    if (accessCodeDoc && accessCodeDoc.code) {
-      // Use a shortened version (first 8 chars, uppercase) for display
-      licenseNumber = accessCodeDoc.code.substring(0, 8).toUpperCase();
+    let licenseNumber = "00000000";
+    if (!teacher.accessCode) {
+      console.warn("No accessCode found for teacher:", teacherUsername);
+      return res.status(400).json({
+        error: "Teacher has no access code. Contact admin to verify licensing.",
+      });
+    }
+
+    try {
+      // Decrypt the AES-256-CBC encrypted code
+      const decryptedAccessCode = decrypt(teacher.accessCode);
+      console.log(
+        "✅ Successfully decrypted access code:",
+        decryptedAccessCode,
+      );
+
+      // Extract first 8 characters as the license number (e.g., "23A442C4" from "US-NMHS-23A442C4-01")
+      licenseNumber = decryptedAccessCode.substring(0, 8).toUpperCase();
+      console.log("License number extracted:", licenseNumber);
+    } catch (decryptError) {
+      console.error("❌ Failed to decrypt access code:", decryptError.message);
+      console.error("Encrypted code was:", teacher.accessCode);
+      return res.status(500).json({
+        error: "Failed to decrypt teacher access code",
+        details: decryptError.message,
+      });
     }
 
     // Generate school shorthand from school name
     function getSchoolShortHand(schoolName) {
       return schoolName
-        .split(' ')
-        .map(word => word[0].toUpperCase())
-        .join('');
+        .split(" ")
+        .map((word) => word[0].toUpperCase())
+        .join("");
     }
-    const state = teacher.state || 'US';
-    const schoolShortHand = getSchoolShortHand(teacher.school || 'HSSCHOOL');
+    const state = teacher.state || "US";
+    const schoolShortHand = getSchoolShortHand(teacher.school || "HSSCHOOL");
 
     // 2. Assign class periods to teacher profile
     await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .updateOne(
-        { Username: teacherUsername },
+        { username: teacherUsername },
         { $set: { classPeriods: periods } },
       );
 
     // 3. Generate codes for each period
-    const codes = periods.map(period => {
+    const codes = periods.map((period) => {
       return `${state}-${schoolShortHand}-${licenseNumber}-${period}`;
     });
 
     // Save each class code in the Access Codes collection with type 'student'
     const accessCodesCollection = client
-      .db('TrinityCapital')
-      .collection('Access Codes');
+      .db("TrinityCapital")
+      .collection("Access Codes");
     for (let i = 0; i < codes.length; i++) {
       await accessCodesCollection.insertOne({
         code: codes[i],
         teacherUsername,
         teacherEmail,
         period: periods[i],
-        type: 'student',
+        type: "student",
         createdAt: new Date(),
       });
     }
@@ -3465,49 +3747,49 @@ app.post('/generateClassCodes', async (req, res) => {
 
     res.status(200).json({ codes, emailSent: true });
   } catch (err) {
-    console.error('Error in /generateClassCodes:', err);
+    console.error("Error in /generateClassCodes:", err);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: err.message });
+      .json({ error: "Internal Server Error", details: err.message });
   }
 });
 
-app.post('/teacherDashboard', async (req, res) => {
+app.post("/teacherDashboard", async (req, res) => {
   try {
     const { teacherUsername } = req.body;
-    console.log('Received /teacherDashboard request for:', teacherUsername);
+    console.log("Received /teacherDashboard request for:", teacherUsername);
     if (!teacherUsername) {
-      console.log('Missing teacherUsername in request body');
-      return res.status(400).json({ error: 'Missing teacherUsername' });
+      console.log("Missing teacherUsername in request body");
+      return res.status(400).json({ error: "Missing teacherUsername" });
     }
 
     // Find the teacher by username to get their actual name
     const teacherDoc = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .findOne({ username: teacherUsername });
     if (!teacherDoc) {
-      console.log('No teacher found for username:', teacherUsername);
-      return res.status(404).json({ error: 'Teacher not found' });
+      console.log("No teacher found for username:", teacherUsername);
+      return res.status(404).json({ error: "Teacher not found" });
     }
     const teacherName = teacherDoc.name;
-    console.log('Resolved teacher name:', teacherName);
+    console.log("Resolved teacher name:", teacherName);
 
     // Find all students assigned to this teacher by name
     const students = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .find({ teacher: teacherName })
       .toArray();
 
     // Prepare student data for dashboard
-    const studentData = students.map(student => ({
+    const studentData = students.map((student) => ({
       memberName: student.memberName,
-      firstName: student.firstName || student.memberName?.split(' ')[0] || '',
-      lastName: student.lastName || student.memberName?.split(' ')[1] || '',
+      firstName: student.firstName || student.memberName?.split(" ")[0] || "",
+      lastName: student.lastName || student.memberName?.split(" ")[1] || "",
       checkingBalance: student.checkingAccount?.balanceTotal ?? 0,
       savingsBalance: student.savingsAccount?.balanceTotal ?? 0,
-      grade: student.grade ?? 'F',
+      grade: student.grade ?? "F",
       lessonsCompleted:
         student.totalLessonsCompleted ?? student.lessonsCompleted ?? 0,
       totalLessonsCompleted: student.totalLessonsCompleted ?? 0,
@@ -3515,37 +3797,37 @@ app.post('/teacherDashboard', async (req, res) => {
       totalScore: student.totalScore ?? 0,
       lastLessonCompleted: student.lastLessonCompleted ?? null,
       lastActivity: student.lastActivity ?? null,
-      classPeriod: student.classPeriod ?? '',
+      classPeriod: student.classPeriod ?? "",
     }));
 
-    console.log('Sending student data to frontend:', studentData);
+    console.log("Sending student data to frontend:", studentData);
     res.status(200).json({ students: studentData });
   } catch (error) {
-    console.error('Error in /teacherDashboard:', error);
+    console.error("Error in /teacherDashboard:", error);
     res
       .status(500)
-      .json({ error: 'Internal Server Error', details: error.message });
+      .json({ error: "Internal Server Error", details: error.message });
   }
 });
 
 // --- EMAIL SENDING ENDPOINT (Gmail API, not SMTP) ---
-app.post('/sendEmail', async (req, res) => {
+app.post("/sendEmail", async (req, res) => {
   try {
     const { sender, recipients, cc, subject, message } = req.body;
     // Look up teacher's OAuth2 credentials
     const teacherDoc = await client
-      .db('TrinityCapital')
-      .collection('Teachers')
+      .db("TrinityCapital")
+      .collection("Teachers")
       .findOne({ username: sender });
-    console.log('SEND EMAIL DEBUG:');
-    console.log('  sender (username):', sender);
-    console.log('  recipients:', recipients);
-    console.log('  cc:', cc);
+    console.log("SEND EMAIL DEBUG:");
+    console.log("  sender (username):", sender);
+    console.log("  recipients:", recipients);
+    console.log("  cc:", cc);
     if (teacherDoc) {
-      console.log('  teacherDoc.username:', teacherDoc.username);
-      console.log('  teacherDoc.oauth:', teacherDoc.oauth);
+      console.log("  teacherDoc.username:", teacherDoc.username);
+      console.log("  teacherDoc.oauth:", teacherDoc.oauth);
     } else {
-      console.log('  teacherDoc not found for username:', sender);
+      console.log("  teacherDoc not found for username:", sender);
     }
     if (
       !teacherDoc ||
@@ -3555,7 +3837,7 @@ app.post('/sendEmail', async (req, res) => {
     ) {
       return res
         .status(400)
-        .json({ error: 'No OAuth2 credentials found for teacher' });
+        .json({ error: "No OAuth2 credentials found for teacher" });
     }
     const teacherEmail = teacherDoc.oauth.email;
     const refreshToken = teacherDoc.oauth.refresh_token;
@@ -3574,23 +3856,23 @@ app.post('/sendEmail', async (req, res) => {
       );
       res.status(200).json({ success: true });
     } catch (error) {
-      const errMsg = error && error.message ? error.message : '';
+      const errMsg = error && error.message ? error.message : "";
       if (
-        errMsg.includes('invalid_grant') ||
-        errMsg.includes('Invalid Credentials')
+        errMsg.includes("invalid_grant") ||
+        errMsg.includes("Invalid Credentials")
       ) {
-        return res.status(401).json({ error: 'oauth_reauth_required' });
+        return res.status(401).json({ error: "oauth_reauth_required" });
       }
       res.status(500).json({
         success: false,
-        error: 'Failed to send email',
+        error: "Failed to send email",
         details: errMsg,
       });
     }
   } catch (err) {
     res.status(500).json({
       success: false,
-      error: 'Internal server error',
+      error: "Internal server error",
       details: err.message,
     });
   }
@@ -3605,14 +3887,14 @@ async function sendEmailViaGmailApi(
   subject,
   body,
 ) {
-  const { google } = require('googleapis');
+  const { google } = require("googleapis");
   const oAuth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.OAUTH2_REDIRECT_URI,
   );
   oAuth2Client.setCredentials({ refresh_token: refreshToken });
-  const gmail = google.gmail({ version: 'v1', auth: oAuth2Client });
+  const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
   // Build RFC822 message
   const messageParts = [`From: "Teacher" <${teacherEmail}>`, `To: ${to}`];
 
@@ -3623,39 +3905,39 @@ async function sendEmailViaGmailApi(
 
   messageParts.push(
     `Subject: ${subject}`,
-    'Content-Type: text/plain; charset=utf-8',
-    '',
+    "Content-Type: text/plain; charset=utf-8",
+    "",
     body,
   );
-  const rawMessage = Buffer.from(messageParts.join('\r\n'))
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+  const rawMessage = Buffer.from(messageParts.join("\r\n"))
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
   try {
     await gmail.users.messages.send({
-      userId: 'me',
+      userId: "me",
       requestBody: {
         raw: rawMessage,
       },
     });
   } catch (error) {
-    console.error('Gmail API send error:', error);
+    console.error("Gmail API send error:", error);
     throw new Error(
       error?.response?.data?.error?.message ||
         error.message ||
-        'Failed to send email via Gmail API',
+        "Failed to send email via Gmail API",
     );
   }
 }
 
 // --- EMAIL SETTINGS FETCH ENDPOINT ---
-app.get('/emailSettings/:teacherUsername', async (req, res) => {
+app.get("/emailSettings/:teacherUsername", async (req, res) => {
   const { teacherUsername } = req.params;
   try {
     const doc = await client
-      .db('TrinityCapital')
-      .collection('EmailSettings')
+      .db("TrinityCapital")
+      .collection("EmailSettings")
       .findOne({ teacherUsername });
     if (doc) {
       res.status(200).json(doc);
@@ -3668,23 +3950,23 @@ app.get('/emailSettings/:teacherUsername', async (req, res) => {
         groups: [],
       };
       await client
-        .db('TrinityCapital')
-        .collection('EmailSettings')
+        .db("TrinityCapital")
+        .collection("EmailSettings")
         .insertOne(emptyDoc);
       res.status(200).json(emptyDoc);
     }
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch email settings' });
+    res.status(500).json({ error: "Failed to fetch email settings" });
   }
 });
 
 // --- EMAIL MODAL FEATURE ENDPOINTS ---
-app.post('/saveEmailAddress', async (req, res) => {
+app.post("/saveEmailAddress", async (req, res) => {
   const { sender, address } = req.body;
   try {
     await client
-      .db('TrinityCapital')
-      .collection('EmailSettings')
+      .db("TrinityCapital")
+      .collection("EmailSettings")
       .updateOne(
         { teacherUsername: sender },
         { $addToSet: { addresses: address } },
@@ -3692,16 +3974,16 @@ app.post('/saveEmailAddress', async (req, res) => {
       );
     res.status(200).json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to save address' });
+    res.status(500).json({ error: "Failed to save address" });
   }
 });
 
-app.post('/saveEmailTemplate', async (req, res) => {
+app.post("/saveEmailTemplate", async (req, res) => {
   const { sender, subject, message } = req.body;
   try {
     await client
-      .db('TrinityCapital')
-      .collection('EmailSettings')
+      .db("TrinityCapital")
+      .collection("EmailSettings")
       .updateOne(
         { teacherUsername: sender },
         { $addToSet: { templates: { subject, message } } },
@@ -3709,16 +3991,16 @@ app.post('/saveEmailTemplate', async (req, res) => {
       );
     res.status(200).json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to save template' });
+    res.status(500).json({ error: "Failed to save template" });
   }
 });
 
-app.post('/saveEmailGroup', async (req, res) => {
+app.post("/saveEmailGroup", async (req, res) => {
   const { sender, name, addresses } = req.body;
   try {
     await client
-      .db('TrinityCapital')
-      .collection('EmailSettings')
+      .db("TrinityCapital")
+      .collection("EmailSettings")
       .updateOne(
         { teacherUsername: sender },
         { $addToSet: { groups: { name, addresses } } },
@@ -3726,39 +4008,39 @@ app.post('/saveEmailGroup', async (req, res) => {
       );
     res.status(200).json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to save group' });
+    res.status(500).json({ error: "Failed to save group" });
   }
 });
 
 // --- NEW ENDPOINTS FOR UNIT ASSIGNMENT ---
 
 // Get all students for admin unit assignment
-app.get('/allStudents', async (req, res) => {
+app.get("/allStudents", async (req, res) => {
   try {
-    console.log('Fetching all students for admin unit assignment');
+    console.log("Fetching all students for admin unit assignment");
 
     const allStudents = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
-      .find({ type: { $ne: 'teacher' } }) // Exclude teacher profiles
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .find({ type: { $ne: "teacher" } }) // Exclude teacher profiles
       .project({ _id: 1, memberName: 1, username: 1 })
       .toArray();
 
     // Return array of student IDs/usernames for assignment
     const studentIds = allStudents.map(
-      student => student._id || student.username || student.memberName,
+      (student) => student._id || student.username || student.memberName,
     );
 
     console.log(`Found ${studentIds.length} students for admin assignment`);
     res.json(studentIds);
   } catch (error) {
-    console.error('Error fetching all students:', error);
-    res.status(500).json({ error: 'Failed to fetch students' });
+    console.error("Error fetching all students:", error);
+    res.status(500).json({ error: "Failed to fetch students" });
   }
 });
 
 // Get students in a specific period
-app.get('/studentsInPeriod/:period', async (req, res) => {
+app.get("/studentsInPeriod/:period", async (req, res) => {
   try {
     const { period } = req.params;
     const periodNumber = parseInt(period, 10);
@@ -3766,18 +4048,18 @@ app.get('/studentsInPeriod/:period', async (req, res) => {
     console.log(`Fetching students in period ${periodNumber}`);
 
     const studentsInPeriod = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .find({
         classPeriod: periodNumber,
-        type: { $ne: 'teacher' }, // Exclude teacher profiles
+        type: { $ne: "teacher" }, // Exclude teacher profiles
       })
       .project({ _id: 1, memberName: 1, username: 1 })
       .toArray();
 
     // Return array of student IDs/usernames for assignment
     const studentIds = studentsInPeriod.map(
-      student => student._id || student.username || student.memberName,
+      (student) => student._id || student.username || student.memberName,
     );
 
     console.log(
@@ -3785,35 +4067,35 @@ app.get('/studentsInPeriod/:period', async (req, res) => {
     );
     res.json(studentIds);
   } catch (error) {
-    console.error('Error fetching students in period:', error);
-    res.status(500).json({ error: 'Failed to fetch students in period' });
+    console.error("Error fetching students in period:", error);
+    res.status(500).json({ error: "Failed to fetch students in period" });
   }
 });
 
 // Get all assigned units with full lesson content for a student
-app.get('/student/:studentId/assignedUnits', async (req, res) => {
+app.get("/student/:studentId/assignedUnits", async (req, res) => {
   try {
     const { studentId } = req.params;
 
     console.log(`=== GET /student/${studentId}/assignedUnits ===`);
-    console.log('Request received at:', new Date().toISOString());
-    console.log('Student ID:', studentId);
+    console.log("Request received at:", new Date().toISOString());
+    console.log("Student ID:", studentId);
 
     // Check if MongoDB client is connected
     if (!client) {
-      console.error('MongoDB client is not initialized');
+      console.error("MongoDB client is not initialized");
       return res.status(500).json({
         success: false,
-        error: 'Database connection not available',
+        error: "Database connection not available",
       });
     }
 
-    console.log('MongoDB client is available, searching for student...');
+    console.log("MongoDB client is available, searching for student...");
 
     // Find the student profile
     const studentProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .findOne({
         $or: [
           { _id: studentId },
@@ -3826,7 +4108,7 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
       console.log(`Student not found in database: ${studentId}`);
       return res.status(404).json({
         success: false,
-        error: 'Student not found',
+        error: "Student not found",
       });
     }
 
@@ -3855,7 +4137,9 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
         if (lessonServerResponse.ok) {
           const lessonData = await lessonServerResponse.json();
           if (lessonData.success && lessonData.units) {
-            const fullUnit = lessonData.units.find(u => u.value === unit.value);
+            const fullUnit = lessonData.units.find(
+              (u) => u.value === unit.value,
+            );
             if (fullUnit && fullUnit.lessons) {
               // Create enriched unit with complete lesson data
               const enrichedUnit = {
@@ -3902,7 +4186,7 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
       // Get all lesson IDs from all assigned units
       const allLessonIds = [];
 
-      newAssignedUnitIds.forEach(unitAssignment => {
+      newAssignedUnitIds.forEach((unitAssignment) => {
         if (
           unitAssignment.lessonIds &&
           Array.isArray(unitAssignment.lessonIds)
@@ -3921,28 +4205,28 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
       if (uniqueLessonIds.length > 0) {
         try {
           console.log(
-            `Querying lessons with IDs: ${uniqueLessonIds.slice(0, 3).join(', ')}...`,
+            `Querying lessons with IDs: ${uniqueLessonIds.slice(0, 3).join(", ")}...`,
           );
 
           // Try both numeric and ObjectId formats for lesson lookup
-          const { ObjectId } = require('mongodb');
+          const { ObjectId } = require("mongodb");
           let lessons = [];
 
           // First try numeric IDs (Dallas Fed lessons)
           const numericIds = uniqueLessonIds
-            .map(id => {
+            .map((id) => {
               const parsed = parseInt(id);
               return isNaN(parsed) ? null : parsed;
             })
-            .filter(id => id !== null);
+            .filter((id) => id !== null);
 
           if (numericIds.length > 0) {
             console.log(
-              `Trying numeric IDs: ${numericIds.slice(0, 3).join(', ')}...`,
+              `Trying numeric IDs: ${numericIds.slice(0, 3).join(", ")}...`,
             );
             const numericLessons = await client
-              .db('TrinityCapital')
-              .collection('Lessons')
+              .db("TrinityCapital")
+              .collection("Lessons")
               .find({ _id: { $in: numericIds } })
               .toArray();
             lessons.push(...numericLessons);
@@ -3953,22 +4237,22 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
 
           // Then try ObjectId format for any remaining IDs
           const objectIds = uniqueLessonIds
-            .map(id => {
+            .map((id) => {
               try {
                 return new ObjectId(id);
               } catch (error) {
                 return null;
               }
             })
-            .filter(id => id !== null);
+            .filter((id) => id !== null);
 
           if (objectIds.length > 0) {
             console.log(
               `Trying ObjectId format for ${objectIds.length} IDs...`,
             );
             const objectIdLessons = await client
-              .db('TrinityCapital')
-              .collection('Lessons')
+              .db("TrinityCapital")
+              .collection("Lessons")
               .find({ _id: { $in: objectIds } })
               .toArray();
             lessons.push(...objectIdLessons);
@@ -3983,7 +4267,7 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
 
           // Create a lookup map for lessons (handle both numeric and ObjectId keys)
           const lessonLookup = {};
-          lessons.forEach(lessonDoc => {
+          lessons.forEach((lessonDoc) => {
             const docId = lessonDoc._id;
             // Store by both string representation and original format
             lessonLookup[docId.toString()] = lessonDoc;
@@ -3993,9 +4277,9 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
           console.log(`Created lesson lookup with ${lessons.length} lessons`);
 
           // Build units with lesson content for the new system
-          newAssignedUnitIds.forEach(unitAssignment => {
+          newAssignedUnitIds.forEach((unitAssignment) => {
             const unitLessons = (unitAssignment.lessonIds || [])
-              .map(lessonId => {
+              .map((lessonId) => {
                 // Try different lookup strategies
                 let lessonDoc =
                   lessonLookup[lessonId] || lessonLookup[parseInt(lessonId)];
@@ -4013,7 +4297,7 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
                     lesson_title:
                       lessonData.lesson_title ||
                       lessonData.title ||
-                      'Untitled Lesson',
+                      "Untitled Lesson",
                     intro_text_blocks: introBlocks,
                     lesson_blocks: lessonBlocks,
                     content: contentArray, // Preserve the user's content array
@@ -4028,7 +4312,7 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
                   return null;
                 }
               })
-              .filter(lesson => lesson !== null);
+              .filter((lesson) => lesson !== null);
 
             // Create enriched unit for the new system
             const enrichedNewUnit = {
@@ -4038,7 +4322,7 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
                 unitAssignment.teacherName || unitAssignment.assignedBy,
               assignedAt: unitAssignment.assignedAt || new Date().toISOString(),
               lessons: unitLessons,
-              assignmentType: 'objectId-based',
+              assignmentType: "objectId-based",
               classPeriod: unitAssignment.classPeriod,
             };
 
@@ -4048,7 +4332,7 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
             );
           });
         } catch (error) {
-          console.error('Error processing ObjectID-based units:', error);
+          console.error("Error processing ObjectID-based units:", error);
         }
       }
     }
@@ -4064,16 +4348,16 @@ app.get('/student/:studentId/assignedUnits', async (req, res) => {
       message: `Found ${enrichedUnits.length} assigned units with complete lesson content`,
     });
   } catch (error) {
-    console.error('Error fetching student assigned units:', error);
+    console.error("Error fetching student assigned units:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch assigned units',
+      error: "Failed to fetch assigned units",
     });
   }
 });
 
 // NEW: Get student's lessons using ObjectID references
-app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
+app.get("/student-lessons-by-ids/:studentId", async (req, res) => {
   try {
     const { studentId } = req.params;
 
@@ -4083,8 +4367,8 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
 
     // Get student profile
     const studentProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .findOne({
         $or: [
           { _id: studentId },
@@ -4096,7 +4380,7 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
     if (!studentProfile) {
       return res.status(404).json({
         success: false,
-        message: 'Student not found',
+        message: "Student not found",
       });
     }
 
@@ -4112,7 +4396,7 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
         `Student has ${studentProfile.assignedUnitIds.length} ObjectID-based unit assignments`,
       );
 
-      studentProfile.assignedUnitIds.forEach(unitAssignment => {
+      studentProfile.assignedUnitIds.forEach((unitAssignment) => {
         if (
           unitAssignment.lessonIds &&
           Array.isArray(unitAssignment.lessonIds)
@@ -4133,8 +4417,8 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
       return res.json({
         success: true,
         lessons: [],
-        message: 'No lessons assigned to this student via ObjectID system',
-        assignmentType: 'objectId-based',
+        message: "No lessons assigned to this student via ObjectID system",
+        assignmentType: "objectId-based",
       });
     }
 
@@ -4142,11 +4426,11 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
     try {
       console.log(`🔗 Requesting lesson content from lesson server...`);
       const lessonServerResponse = await fetch(
-        'http://localhost:4000/get-lessons-by-ids',
+        "http://localhost:4000/get-lessons-by-ids",
         {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
             lessonIds: uniqueLessonIds,
@@ -4164,7 +4448,7 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
           );
 
           // Log lesson content summary
-          console.log('--- Retrieved Lesson Summary ---');
+          console.log("--- Retrieved Lesson Summary ---");
           lessonData.lessons.forEach((lesson, index) => {
             console.log(`${index + 1}. ${lesson.lesson_title}`);
             console.log(
@@ -4180,14 +4464,14 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
             lessons: lessonData.lessons,
             requestedIds: uniqueLessonIds.length,
             retrievedCount: lessonData.lessons.length,
-            assignmentType: 'objectId-based',
+            assignmentType: "objectId-based",
             message: `Retrieved ${lessonData.lessons.length} lessons using ObjectID references`,
           });
         } else {
-          console.error('Lesson server returned error:', lessonData.message);
+          console.error("Lesson server returned error:", lessonData.message);
           return res.status(500).json({
             success: false,
-            message: 'Failed to retrieve lesson content: ' + lessonData.message,
+            message: "Failed to retrieve lesson content: " + lessonData.message,
           });
         }
       } else {
@@ -4196,27 +4480,27 @@ app.get('/student-lessons-by-ids/:studentId', async (req, res) => {
         );
         return res.status(500).json({
           success: false,
-          message: 'Failed to contact lesson server',
+          message: "Failed to contact lesson server",
         });
       }
     } catch (error) {
-      console.error('Error fetching lessons from lesson server:', error);
+      console.error("Error fetching lessons from lesson server:", error);
       return res.status(500).json({
         success: false,
-        message: 'Error communicating with lesson server: ' + error.message,
+        message: "Error communicating with lesson server: " + error.message,
       });
     }
   } catch (error) {
-    console.error('Error fetching student lessons by IDs:', error);
+    console.error("Error fetching student lessons by IDs:", error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch student lessons: ' + error.message,
+      message: "Failed to fetch student lessons: " + error.message,
     });
   }
 });
 
 // Assign unit to individual student (NEW ObjectID-based system)
-app.post('/assignUnitToStudent', async (req, res) => {
+app.post("/assignUnitToStudent", async (req, res) => {
   try {
     const { studentId, unitId, unitName, assignedBy } = req.body;
 
@@ -4243,13 +4527,13 @@ app.post('/assignUnitToStudent', async (req, res) => {
 
         if (lessonData.success && lessonData.units) {
           const targetUnit = lessonData.units.find(
-            unit => unit.value === unitId,
+            (unit) => unit.value === unitId,
           );
           if (targetUnit && targetUnit.lessons) {
             // Create a lookup map from lesson titles to ObjectIDs from the lessons array
             const lessonLookup = {};
             if (lessonData.lessons && Array.isArray(lessonData.lessons)) {
-              lessonData.lessons.forEach(lesson => {
+              lessonData.lessons.forEach((lesson) => {
                 if (lesson._id && lesson.lesson_title) {
                   lessonLookup[lesson.lesson_title] = lesson._id;
                 }
@@ -4261,7 +4545,7 @@ app.post('/assignUnitToStudent', async (req, res) => {
 
             // Extract ObjectIDs by matching lesson titles
             lessonIds = targetUnit.lessons
-              .map(lesson => {
+              .map((lesson) => {
                 if (lesson._id) {
                   // Lesson already has proper ObjectID (Units 2-5)
                   console.log(
@@ -4280,12 +4564,12 @@ app.post('/assignUnitToStudent', async (req, res) => {
                   return objectId;
                 } else {
                   console.warn(
-                    `⚠️ No ObjectID found for lesson: ${lesson.lesson_title || 'Unknown'}`,
+                    `⚠️ No ObjectID found for lesson: ${lesson.lesson_title || "Unknown"}`,
                   );
                   return null;
                 }
               })
-              .filter(id => id); // Remove any null/undefined IDs
+              .filter((id) => id); // Remove any null/undefined IDs
             console.log(
               `✅ Found ${lessonIds.length} lesson ObjectIDs for unit ${unitName}`,
             );
@@ -4317,7 +4601,7 @@ app.post('/assignUnitToStudent', async (req, res) => {
       assignedBy: assignedBy,
       assignedAt: new Date(),
       lessonIds: lessonIds, // Store only ObjectIDs, not full content
-      assignmentType: 'objectId-based',
+      assignmentType: "objectId-based",
     };
 
     console.log(`📦 ObjectID-based unit assignment created:`, {
@@ -4330,8 +4614,8 @@ app.post('/assignUnitToStudent', async (req, res) => {
 
     // Update student profile with ObjectID-based assignment
     const updateResult = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .updateOne(
         {
           $or: [
@@ -4349,7 +4633,7 @@ app.post('/assignUnitToStudent', async (req, res) => {
       console.log(`Student not found: ${studentId}`);
       return res.status(404).json({
         success: false,
-        error: 'Student not found',
+        error: "Student not found",
       });
     }
 
@@ -4361,33 +4645,33 @@ app.post('/assignUnitToStudent', async (req, res) => {
     );
 
     // Emit socket event to notify student app of new unit assignment
-    io.emit('unitAssignedToStudent', {
+    io.emit("unitAssignedToStudent", {
       studentId: studentId,
       unitId: unitId,
       unitName: unitName,
       assignedBy: assignedBy,
       unitAssignment: unitAssignment,
-      assignmentType: 'objectId-based',
+      assignmentType: "objectId-based",
     });
 
     res.json({
       success: true,
-      message: 'Unit assigned successfully using ObjectID references',
+      message: "Unit assigned successfully using ObjectID references",
       unitAssignment: unitAssignment,
       lessonIdsIncluded: lessonIds.length,
-      assignmentType: 'objectId-based',
+      assignmentType: "objectId-based",
     });
   } catch (error) {
-    console.error('Error assigning unit to student:', error);
+    console.error("Error assigning unit to student:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to assign unit to student',
+      error: "Failed to assign unit to student",
     });
   }
 });
 
 // Get bill information for a student
-app.get('/getBillInfo/:memberName', async (req, res) => {
+app.get("/getBillInfo/:memberName", async (req, res) => {
   try {
     const { memberName } = req.params;
     console.log(`Fetching bill info for: ${memberName}`);
@@ -4399,14 +4683,14 @@ app.get('/getBillInfo/:memberName', async (req, res) => {
 
     // Find the student's profile to get their bill information
     const studentProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .findOne({ memberName: memberName });
 
     if (!studentProfile) {
       return res.status(404).json({
         success: false,
-        error: 'Student profile not found',
+        error: "Student profile not found",
       });
     }
 
@@ -4415,26 +4699,26 @@ app.get('/getBillInfo/:memberName', async (req, res) => {
       success: true,
       bills: studentProfile.bills || [],
       vendors: [
-        'Electricity Co.',
-        'Water Utility',
-        'Internet Provider',
-        'Phone Company',
+        "Electricity Co.",
+        "Water Utility",
+        "Internet Provider",
+        "Phone Company",
       ],
     };
 
     res.json(billInfo);
   } catch (error) {
-    console.error('Error fetching bill info:', error);
+    console.error("Error fetching bill info:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch bill information',
+      error: "Failed to fetch bill information",
       details: error.message,
     });
   }
 });
 
 // Get classmates for a student
-app.get('/classmates/:memberName', async (req, res) => {
+app.get("/classmates/:memberName", async (req, res) => {
   try {
     const { memberName } = req.params;
     console.log(`Fetching classmates for: ${memberName}`);
@@ -4446,21 +4730,21 @@ app.get('/classmates/:memberName', async (req, res) => {
 
     // Find the student's profile to get their class/teacher information
     const studentProfile = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .findOne({ memberName: memberName });
 
     if (!studentProfile) {
       return res.status(404).json({
         success: false,
-        error: 'Student profile not found',
+        error: "Student profile not found",
       });
     }
 
     // Find other students with the same teacher (classmates)
     const classmates = await client
-      .db('TrinityCapital')
-      .collection('User Profiles')
+      .db("TrinityCapital")
+      .collection("User Profiles")
       .find({
         teacher: studentProfile.teacher,
         memberName: { $ne: memberName }, // Exclude the requesting student
@@ -4468,35 +4752,216 @@ app.get('/classmates/:memberName', async (req, res) => {
       .project({ memberName: 1, _id: 0 })
       .toArray();
 
-    const classmateNames = classmates.map(classmate => classmate.memberName);
+    const classmateNames = classmates.map((classmate) => classmate.memberName);
 
     res.json({
       success: true,
       classmates: classmateNames,
     });
   } catch (error) {
-    console.error('Error fetching classmates:', error);
+    console.error("Error fetching classmates:", error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch classmates',
+      error: "Failed to fetch classmates",
       details: error.message,
     });
   }
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get("/health", (req, res) => {
   res.status(200).json({
-    status: 'healthy',
+    status: "healthy",
     timestamp: new Date().toISOString(),
     services: {
-      server: 'running',
-      database: 'connected',
+      server: "running",
+      database: "connected",
       port: port,
     },
-    version: '1.0.0',
+    version: "1.0.0",
   });
 });
+
+/*****************************************UPDATE MANAGEMENT***************************************************/
+
+// Track update status globally
+let updateStatus = {
+  isUpdating: false,
+  progress: 0,
+  message: "Idle",
+  startTime: null,
+};
+
+// Connected clients for update notifications
+const updateClients = new Set();
+
+// Endpoint to show update screen
+app.get("/update-screen", (req, res) => {
+  res.sendFile(__dirname + "/Frontend/updateScreen.html");
+});
+
+// Endpoint to trigger an update (can be called by GitHub webhook or admin panel)
+app.post("/trigger-update", async (req, res) => {
+  try {
+    const { progress, message } = req.body;
+
+    if (updateStatus.isUpdating && progress === 0) {
+      // Update already in progress
+      return res.status(409).json({
+        error: "Update already in progress",
+        currentProgress: updateStatus.progress,
+      });
+    }
+
+    // Start update
+    if (!updateStatus.isUpdating) {
+      updateStatus.isUpdating = true;
+      updateStatus.startTime = new Date();
+      console.log(
+        "🔄 UPDATE TRIGGERED: Starting Trinity Capital update process",
+      );
+
+      // Notify all connected clients
+      io.emit("update-start", {
+        message: "Update initiated",
+        timestamp: new Date().toISOString(),
+      });
+
+      // Simulate update process if no progress provided
+      if (!progress) {
+        simulateUpdate();
+      }
+    }
+
+    // Update progress if provided
+    if (progress !== undefined) {
+      updateStatus.progress = Math.min(progress, 99); // Cap at 99 until completion
+      if (message) {
+        updateStatus.message = message;
+      }
+
+      // Notify clients of progress
+      io.emit("update-progress", {
+        progress: updateStatus.progress,
+        message: updateStatus.message,
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Update triggered",
+      status: updateStatus,
+    });
+  } catch (error) {
+    console.error("Error triggering update:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint to complete update
+app.post("/complete-update", (req, res) => {
+  try {
+    if (!updateStatus.isUpdating) {
+      return res.status(400).json({ error: "No update in progress" });
+    }
+
+    updateStatus.progress = 100;
+    updateStatus.message = "Update complete";
+
+    console.log("✅ UPDATE COMPLETE: Trinity Capital successfully updated");
+
+    // Notify all clients
+    io.emit("update-complete", {
+      message: "Update completed successfully",
+      duration: Date.now() - updateStatus.startTime,
+    });
+
+    // Reset update status
+    setTimeout(() => {
+      updateStatus.isUpdating = false;
+      updateStatus.progress = 0;
+      updateStatus.message = "Idle";
+      updateStatus.startTime = null;
+    }, 2000);
+
+    res.json({
+      success: true,
+      message: "Update completed",
+      duration: Date.now() - updateStatus.startTime,
+    });
+  } catch (error) {
+    console.error("Error completing update:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint to get current update status
+app.get("/update-status", (req, res) => {
+  res.json({
+    isUpdating: updateStatus.isUpdating,
+    progress: updateStatus.progress,
+    message: updateStatus.message,
+    startTime: updateStatus.startTime,
+  });
+});
+
+// Middleware to redirect all requests to update screen if updating
+app.use((req, res, next) => {
+  // Don't redirect these routes
+  const bypassRoutes = [
+    "/update-screen",
+    "/update-status",
+    "/trigger-update",
+    "/complete-update",
+    "/health",
+    "/api/",
+  ];
+
+  const shouldBypass = bypassRoutes.some((route) => req.path.startsWith(route));
+
+  if (updateStatus.isUpdating && !shouldBypass && req.method === "GET") {
+    return res.redirect("/update-screen");
+  }
+
+  next();
+});
+
+// Simulate update process (for demo/testing)
+function simulateUpdate() {
+  const stages = [
+    { delay: 1000, progress: 15, message: "Downloading latest version" },
+    { delay: 2000, progress: 35, message: "Extracting files" },
+    { delay: 2000, progress: 55, message: "Installing dependencies" },
+    { delay: 1500, progress: 75, message: "Finalizing update" },
+    { delay: 1500, progress: 90, message: "Restarting server" },
+    { delay: 2000, progress: 100, message: "Update complete" },
+  ];
+
+  let currentDelay = 0;
+
+  stages.forEach((stage) => {
+    currentDelay += stage.delay;
+    setTimeout(() => {
+      updateStatus.progress = stage.progress;
+      updateStatus.message = stage.message;
+
+      io.emit("update-progress", {
+        progress: updateStatus.progress,
+        message: updateStatus.message,
+      });
+
+      if (stage.progress === 100) {
+        setTimeout(() => {
+          updateStatus.isUpdating = false;
+          io.emit("update-complete", {
+            message: "Update completed successfully",
+            duration: Date.now() - updateStatus.startTime,
+          });
+        }, 1000);
+      }
+    }, currentDelay);
+  });
+}
 
 server.listen(port, () => {
   console.log(`Server running on port ${port}`);
