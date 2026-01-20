@@ -9,7 +9,17 @@ const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
 const SchedulerManager = require("./schedulerManager");
-const { setupGitHubWebhook } = require("./githubWebhookHandler");
+
+// Import GitHub webhook handler if available (optional in production)
+let setupGitHubWebhook;
+try {
+  setupGitHubWebhook = require("./githubWebhookHandler").setupGitHubWebhook;
+} catch (err) {
+  console.warn(
+    "⚠️ GitHub webhook handler not available. Update notifications disabled.",
+  );
+  setupGitHubWebhook = () => {}; // No-op function
+}
 
 // Add fetch for Node.js versions that don't have it built-in
 let fetch;
@@ -158,13 +168,14 @@ io.on("connection", (socket) => {
   // Handle user identification
   socket.on("identify", (userId) => {
     try {
-      console.log("User identified:", userId);
+      console.log(`🆔 User identified: ${userId} (Socket ID: ${socket.id})`);
       userSockets.set(userId, socket);
+      console.log(`📊 Total identified users: ${userSockets.size}`);
 
       // Acknowledge successful identification
       socket.emit("identified", { success: true });
     } catch (error) {
-      console.error("Error during user identification:", error);
+      console.error("❌ Error during user identification:", error);
       socket.emit("error", { message: "Failed to identify user" });
     }
   });
@@ -474,8 +485,11 @@ io.on("connection", (socket) => {
       // Remove socket from map when user disconnects
       for (const [userId, userSocket] of userSockets.entries()) {
         if (userSocket === socket) {
-          console.log("User disconnected:", userId);
+          console.log(
+            `👋 User disconnected: ${userId} (Socket ID: ${socket.id})`,
+          );
           userSockets.delete(userId);
+          console.log(`📊 Total identified users now: ${userSockets.size}`);
           break;
         }
       }
