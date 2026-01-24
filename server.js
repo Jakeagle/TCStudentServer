@@ -4627,24 +4627,44 @@ app.post("/assignUnitToStudent", async (req, res) => {
     });
 
     // Update student profile with ObjectID-based assignment
+    // Handle studentId that might be an ObjectId string, numeric ID, or username
+    const { ObjectId } = require("mongodb");
+    let query = {};
+
+    try {
+      // Try as ObjectId first
+      if (studentId.match(/^[0-9a-f]{24}$/i)) {
+        query = { _id: new ObjectId(studentId) };
+      } else {
+        // Try as numeric ID or username
+        const numericId = parseInt(studentId, 10);
+        if (!isNaN(numericId)) {
+          query = { _id: numericId };
+        } else {
+          query = {
+            $or: [{ username: studentId }, { memberName: studentId }],
+          };
+        }
+      }
+    } catch (e) {
+      // If ObjectId conversion fails, try as string fields
+      query = {
+        $or: [{ username: studentId }, { memberName: studentId }],
+      };
+    }
+
+    console.log(`🔍 Searching for student with query:`, query);
+
     const updateResult = await client
       .db("TrinityCapital")
       .collection("User Profiles")
-      .updateOne(
-        {
-          $or: [
-            { _id: studentId },
-            { username: studentId },
-            { memberName: studentId },
-          ],
-        },
-        {
-          $addToSet: { assignedUnitIds: unitAssignment }, // New field for ObjectID-based assignments
-        },
-      );
+      .updateOne(query, {
+        $addToSet: { assignedUnitIds: unitAssignment }, // New field for ObjectID-based assignments
+      });
 
     if (updateResult.matchedCount === 0) {
-      console.log(`Student not found: ${studentId}`);
+      console.log(`❌ Student not found: ${studentId}`);
+      console.log(`   Query attempted:`, query);
       return res.status(404).json({
         success: false,
         error: "Student not found",
