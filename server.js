@@ -241,6 +241,7 @@ io.on("connection", (socket) => {
         if (teacherSocket) {
           teacherSocket.emit("studentFinancialUpdate", {
             studentName,
+            teacherName,
             accountType,
             account,
             healthData,
