@@ -222,7 +222,9 @@ io.on("connection", (socket) => {
       // Calculate student health
       const healthData = calculateStudentHealth(studentProfile);
       console.log(`📊 [FinancialActivity] Health calculated:`, {
-        balance: healthData.balance,
+        overall: healthData.overall,
+        financial: healthData.financial,
+        academic: healthData.academic,
         status: healthData.status,
       });
 
@@ -1110,18 +1112,25 @@ const balanceCalc = async function (memberName, acc, type) {
     return;
   }
 
-  // Extracting updated checking account
-  const updatedChecking = updatedUserProfile.checkingAccount;
-  console.log(`Updated Checking account data:`, updatedChecking);
+  // Extracting updated account data based on type
+  let updatedAccount;
+  let eventName;
+  if (type === "Checking") {
+    updatedAccount = updatedUserProfile.checkingAccount;
+    eventName = "checkingAccountUpdate";
+    console.log(`Updated Checking account data:`, updatedAccount);
+  } else if (type === "Savings") {
+    updatedAccount = updatedUserProfile.savingsAccount;
+    eventName = "savingsAccountUpdate";
+    console.log(`Updated Savings account data:`, updatedAccount);
+  }
 
   // Emitting socket event
   try {
     const userSocket = userSockets.get(memberName);
     if (userSocket) {
-      console.log(
-        `Emitting 'checkingAccountUpdate' event to socket for ${memberName}`,
-      );
-      userSocket.emit("checkingAccountUpdate", updatedChecking);
+      console.log(`Emitting '${eventName}' event to socket for ${memberName}`);
+      userSocket.emit(eventName, updatedAccount);
     } else {
       console.warn(`No socket found for ${memberName}`);
     }
