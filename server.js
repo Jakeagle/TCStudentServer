@@ -1018,11 +1018,37 @@ app.post("/transfer", async (req, res) => {
         .findOne({ "checkingAccount.accountHolder": memberNamePg });
 
       const updatedChecking = updatedUserProfile.checkingAccount;
+      const updatedSavings = updatedUserProfile.savingsAccount;
+
+      // Calculate and update savings balance from transactions
+      const savingsAmounts = updatedSavings.transactions.map((t) => t.amount);
+      const savingsBalance = savingsAmounts.reduce((acc, mov) => acc + mov, 0);
+
+      await client
+        .db("TrinityCapital")
+        .collection("User Profiles")
+        .updateOne(
+          { "savingsAccount.accountHolder": memberNamePg },
+          { $set: { "savingsAccount.balanceTotal": savingsBalance } },
+        );
+
+      // Get the updated profile with new savings balance
+      const finalUserProfile = await client
+        .db("TrinityCapital")
+        .collection("User Profiles")
+        .findOne({ "checkingAccount.accountHolder": memberNamePg });
 
       // Send update only to specific user
       const userSocket = userSockets.get(memberNamePg);
       if (userSocket) {
-        userSocket.emit("checkingAccountUpdate", updatedChecking);
+        userSocket.emit(
+          "checkingAccountUpdate",
+          finalUserProfile.checkingAccount,
+        );
+        userSocket.emit(
+          "savingsAccountUpdate",
+          finalUserProfile.savingsAccount,
+        );
       }
 
       res.status(200).json({ message: "Transaction successful" });
@@ -1112,25 +1138,18 @@ const balanceCalc = async function (memberName, acc, type) {
     return;
   }
 
-  // Extracting updated account data based on type
-  let updatedAccount;
-  let eventName;
-  if (type === "Checking") {
-    updatedAccount = updatedUserProfile.checkingAccount;
-    eventName = "checkingAccountUpdate";
-    console.log(`Updated Checking account data:`, updatedAccount);
-  } else if (type === "Savings") {
-    updatedAccount = updatedUserProfile.savingsAccount;
-    eventName = "savingsAccountUpdate";
-    console.log(`Updated Savings account data:`, updatedAccount);
-  }
+  // Extracting updated checking account
+  const updatedChecking = updatedUserProfile.checkingAccount;
+  console.log(`Updated Checking account data:`, updatedChecking);
 
   // Emitting socket event
   try {
     const userSocket = userSockets.get(memberName);
     if (userSocket) {
-      console.log(`Emitting '${eventName}' event to socket for ${memberName}`);
-      userSocket.emit(eventName, updatedAccount);
+      console.log(
+        `Emitting 'checkingAccountUpdate' event to socket for ${memberName}`,
+      );
+      userSocket.emit("checkingAccountUpdate", updatedChecking);
     } else {
       console.warn(`No socket found for ${memberName}`);
     }
