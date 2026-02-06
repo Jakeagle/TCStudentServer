@@ -199,9 +199,10 @@ io.on("connection", (socket) => {
       console.log(`💰 Financial activity from ${studentName} (${accountType})`);
 
       // Get full student profile from database
-      const studentProfile = await Profiles.findOne({
-        memberName: studentName,
-      });
+      const studentProfile = await client
+        .db("TrinityCapital")
+        .collection("User Profiles")
+        .findOne({ memberName: studentName });
 
       if (!studentProfile) {
         console.log(`⚠️  Student profile not found: ${studentName}`);
