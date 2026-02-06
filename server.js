@@ -192,6 +192,45 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle student financial activity updates for teacher dashboard
+  socket.on("studentFinancialActivity", async (data) => {
+    try {
+      const { studentName, accountType, account } = data;
+      console.log(`💰 Financial activity from ${studentName} (${accountType})`);
+
+      // Get full student profile from database
+      const studentProfile = await Profiles.findOne({
+        memberName: studentName,
+      });
+
+      if (!studentProfile) {
+        console.log(`⚠️  Student profile not found: ${studentName}`);
+        return;
+      }
+
+      // Calculate student health
+      const healthData = calculateStudentHealth(studentProfile);
+
+      // Emit to teacher dashboard
+      const teacherName = studentProfile.teacher;
+      if (teacherName) {
+        const teacherSocket = userSockets.get(teacherName);
+        if (teacherSocket) {
+          teacherSocket.emit("studentFinancialUpdate", {
+            studentName,
+            accountType,
+            account,
+            healthData,
+            timestamp: new Date().toISOString(),
+          });
+          console.log(`📊 Sent health update to teacher: ${teacherName}`);
+        }
+      }
+    } catch (error) {
+      console.error("❌ Error processing student financial activity:", error);
+    }
+  });
+
   // Handle studentCreated event from remote client (e.g., localhost:5000)
   socket.on("studentCreated", (data, callback) => {
     console.log("Received studentCreated event from remote client:", data);
