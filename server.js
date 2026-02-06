@@ -173,6 +173,8 @@ io.on("connection", (socket) => {
   socket.on("identify", (userId) => {
     try {
       console.log(`🆔 User identified: ${userId} (Socket ID: ${socket.id})`);
+
+      // Update the socket in the map (important for reconnections)
       userSockets.set(userId, socket);
       console.log(`📊 Total identified users: ${userSockets.size}`);
 
@@ -196,7 +198,9 @@ io.on("connection", (socket) => {
   socket.on("studentFinancialActivity", async (data) => {
     try {
       const { studentName, accountType, account } = data;
-      console.log(`💰 Financial activity from ${studentName} (${accountType})`);
+      console.log(
+        `💰 [FinancialActivity] Received from ${studentName} (${accountType})`,
+      );
 
       // Get full student profile from database
       const studentProfile = await client
@@ -205,16 +209,34 @@ io.on("connection", (socket) => {
         .findOne({ memberName: studentName });
 
       if (!studentProfile) {
-        console.log(`⚠️  Student profile not found: ${studentName}`);
+        console.log(
+          `⚠️  [FinancialActivity] Student profile not found: ${studentName}`,
+        );
         return;
       }
 
+      console.log(
+        `👨‍🏫 [FinancialActivity] Student teacher: ${studentProfile.teacher}`,
+      );
+
       // Calculate student health
       const healthData = calculateStudentHealth(studentProfile);
+      console.log(`📊 [FinancialActivity] Health calculated:`, {
+        balance: healthData.balance,
+        status: healthData.status,
+      });
 
       // Emit to teacher dashboard
       const teacherName = studentProfile.teacher;
       if (teacherName) {
+        console.log(
+          `🔍 [FinancialActivity] Looking for teacher socket: ${teacherName}`,
+        );
+        console.log(
+          `🔍 [FinancialActivity] Active sockets:`,
+          Array.from(userSockets.keys()),
+        );
+
         const teacherSocket = userSockets.get(teacherName);
         if (teacherSocket) {
           teacherSocket.emit("studentFinancialUpdate", {
@@ -224,8 +246,18 @@ io.on("connection", (socket) => {
             healthData,
             timestamp: new Date().toISOString(),
           });
-          console.log(`📊 Sent health update to teacher: ${teacherName}`);
+          console.log(
+            `✅ [FinancialActivity] Sent health update to teacher: ${teacherName}`,
+          );
+        } else {
+          console.log(
+            `❌ [FinancialActivity] Teacher socket not found: ${teacherName}`,
+          );
         }
+      } else {
+        console.log(
+          `⚠️  [FinancialActivity] No teacher assigned to student: ${studentName}`,
+        );
       }
     } catch (error) {
       console.error("❌ Error processing student financial activity:", error);
@@ -541,13 +573,14 @@ io.on("connection", (socket) => {
             `👋 User disconnected: ${userId} (Socket ID: ${socket.id})`,
           );
 
-          // Disable quick time mode if user was in it
-          if (quickTimeManager && quickTimeManager.isSampleUser(userId)) {
-            console.log(
-              `⏱️  [Disconnect] Disabling Quick Time mode for: ${userId}`,
-            );
-            quickTimeManager.disableQuickTimeMode(userId);
-          }
+          // DON'T disable quick time mode on disconnect - browser tabs can briefly lose connection
+          // Quick time continues running on server until explicit logout or timeout
+          // if (quickTimeManager && quickTimeManager.isSampleUser(userId)) {
+          //   console.log(
+          //     `⏱️  [Disconnect] Disabling Quick Time mode for: ${userId}`,
+          //   );
+          //   quickTimeManager.disableQuickTimeMode(userId);
+          // }
 
           userSockets.delete(userId);
           console.log(`📊 Total identified users now: ${userSockets.size}`);
