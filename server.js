@@ -3528,6 +3528,18 @@ app.post("/sample/cleanup-messages/:teacherName", async (req, res) => {
       return res.status(400).json({ error: "Missing teacherName parameter" });
     }
 
+    // CRITICAL SECURITY CHECK: Only allow cleanup for sample users
+    if (!decodedTeacherName.toLowerCase().includes("sample")) {
+      console.log(
+        `🚫 [SampleTeacherMessagesCleanup] BLOCKED: "${decodedTeacherName}" is not a sample user - cleanup denied`,
+      );
+      return res.status(403).json({
+        success: false,
+        error: "Cleanup is only allowed for sample users",
+        message: `"${decodedTeacherName}" is not a sample account`,
+      });
+    }
+
     console.log("\n" + "=".repeat(80));
     console.log(
       `💬 [SampleTeacherMessagesCleanup] Starting message cleanup for: ${decodedTeacherName}`,
@@ -3617,6 +3629,18 @@ app.post("/sample/cleanup-student/:studentName", async (req, res) => {
 
     if (!decodedStudentName) {
       return res.status(400).json({ error: "Missing studentName parameter" });
+    }
+
+    // CRITICAL SECURITY CHECK: Only allow cleanup for sample users
+    if (!decodedStudentName.toLowerCase().includes("sample")) {
+      console.log(
+        `🚫 [SampleStudentCleanup] BLOCKED: "${decodedStudentName}" is not a sample user - cleanup denied`,
+      );
+      return res.status(403).json({
+        success: false,
+        error: "Cleanup is only allowed for sample users",
+        message: `"${decodedStudentName}" is not a sample account`,
+      });
     }
 
     console.log("\n" + "=".repeat(80));
