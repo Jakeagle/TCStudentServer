@@ -194,6 +194,56 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Handle broadcast requests from lesson server (port 4000) to students
+  socket.on("broadcastToStudent", (payload, callback) => {
+    try {
+      const { eventName, data } = payload;
+      console.log(
+        `\n📡 [BroadcastToStudent] Received request to broadcast '${eventName}' to ${data.studentName}`,
+      );
+      console.log(
+        `📊 [BroadcastToStudent] Connected users: ${userSockets.size}`,
+      );
+      console.log(
+        `📋 [BroadcastToStudent] User list: ${Array.from(userSockets.keys()).join(", ")}`,
+      );
+
+      // Broadcast to all connected clients (students will filter by their name)
+      io.emit(eventName, data);
+      console.log(
+        `📢 [BroadcastToStudent] Broadcasted '${eventName}' to all clients`,
+      );
+
+      // Try to send directly to the specific student if they're connected
+      const studentSocket = userSockets.get(data.studentName);
+      if (studentSocket && studentSocket.connected) {
+        studentSocket.emit(eventName, data);
+        console.log(
+          `✅ [BroadcastToStudent] Sent '${eventName}' directly to ${data.studentName}`,
+        );
+
+        // Send acknowledgment back to lesson server
+        if (callback) callback({ success: true, delivered: true });
+      } else {
+        console.log(
+          `⚠️  [BroadcastToStudent] Student ${data.studentName} not currently connected`,
+        );
+        console.log(
+          `   Broadcasting anyway - student will receive on next connection`,
+        );
+
+        // Send acknowledgment even if student not connected (broadcast still sent)
+        if (callback) callback({ success: true, delivered: false });
+      }
+    } catch (error) {
+      console.error(
+        "❌ [BroadcastToStudent] Error broadcasting to student:",
+        error,
+      );
+      if (callback) callback({ success: false, error: error.message });
+    }
+  });
+
   // Handle student financial activity updates for teacher dashboard
   socket.on("studentFinancialActivity", async (data) => {
     try {
@@ -2167,49 +2217,6 @@ function calculateStudentHealth(student) {
   return health;
 }
 
-app.post("/lessonArrays", async (req, res) => {
-  try {
-    // In a real application, you would fetch this from a 'Lessons' collection in your database.
-    // For now, we'll use a mock array that matches the structure in index.html.
-    const lessons = [
-      { name: "Tutorial", icon: "fa-rocket rocketIcon", id: "lesson1Div" },
-      { name: "Transfers", icon: "fa-money-bill-transfer", id: "lesson2Div" },
-      {
-        name: "Bills & Paychecks",
-        icon: "fa-file-invoice-dollar bpImg",
-        id: "lesson3Div",
-      },
-      {
-        name: "Deposts",
-        icon: "fa-money-check depositImg",
-        id: "lesson4Div",
-      },
-      { name: "Sending Money", icon: "fa-dollar-sign smImg", id: "lesson5Div" },
-      {
-        name: "Credit",
-        icon: "fa-regular fa-credit-card creditImg",
-        id: "lesson6Div",
-      },
-    ];
-
-    const htmlCode = lessons
-      .map(
-        (lesson) => `
-      <div class="col-1 lessonDiv ${lesson.id}">
-        <p class="lessonImg"><i class="fa-solid ${lesson.icon}"></i></p>
-        <h5 class="lessonName">${lesson.name}</h5>
-      </div>`,
-      )
-      .join("");
-
-    io.emit("lessonHtml", htmlCode);
-    res.status(200).json({ message: "Lesson HTML emitted successfully." });
-  } catch (error) {
-    console.error("Error in /lessonArrays:", error);
-    res.status(500).json({ error: "Internal Server Error" });
-  }
-});
-
 // Handle lesson completion and update student profile
 app.post("/lesson-completion", async (req, res) => {
   try {
@@ -3108,210 +3115,6 @@ app.get("/api/student-lessons/:studentId", async (req, res) => {
 /*****************************************END NEW LESSON ENGINE API ENDPOINTS***************************************************/
 
 // Replace lesson in unit endpoint
-app.post("/replaceLessonInUnit", async (req, res) => {
-  try {
-    const { teacherName, unitValue, oldLessonId, newLessonId } = req.body;
-
-    // Debug logging
-    console.log("Replace lesson request received:");
-    console.log("teacherName:", teacherName);
-    console.log("unitValue:", unitValue, "type:", typeof unitValue);
-    console.log("oldLessonId:", oldLessonId, "type:", typeof oldLessonId);
-    console.log("newLessonId:", newLessonId, "type:", typeof newLessonId);
-
-    if (!teacherName || !unitValue || !oldLessonId || !newLessonId) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Missing required parameters: teacherName, unitValue, oldLessonId, newLessonId",
-      });
-    }
-
-    // Function to validate ObjectId
-    function isValidObjectId(id) {
-      return ObjectId.isValid(id) && String(new ObjectId(id)) === id;
-    }
-
-    // Validate new lesson ObjectId
-    if (!isValidObjectId(newLessonId)) {
-      console.log("Invalid newLessonId format:", newLessonId);
-      return res.status(400).json({
-        success: false,
-        message: "Invalid newLessonId format",
-      });
-    }
-
-    // Get the old lesson details from the Lessons collection to find the title
-    const oldLesson = await client
-      .db("TrinityCapital")
-      .collection("Lessons")
-      .findOne({ _id: new ObjectId(oldLessonId) });
-
-    if (!oldLesson) {
-      return res.status(404).json({
-        success: false,
-        message: "Old lesson not found",
-      });
-    }
-
-    // Get the new lesson details from the Lessons collection
-    const newLesson = await client
-      .db("TrinityCapital")
-      .collection("Lessons")
-      .findOne({ _id: new ObjectId(newLessonId) });
-
-    if (!newLesson) {
-      return res.status(404).json({
-        success: false,
-        message: "New lesson not found",
-      });
-    }
-
-    // Update the lesson in the teacher's document using lesson title for matching
-    const updateResult = await client
-      .db("TrinityCapital")
-      .collection("Teachers")
-      .updateOne(
-        {
-          name: teacherName,
-          "units.value": unitValue,
-          "units.lessons.lesson_title": oldLesson.lesson.lesson_title,
-        },
-        {
-          $set: {
-            "units.$[unit].lessons.$[lesson]": {
-              lesson_title: newLesson.lesson.lesson_title,
-              intro_text_blocks: newLesson.lesson.intro_text_blocks,
-              conditions: newLesson.lesson.conditions,
-            },
-          },
-        },
-        {
-          arrayFilters: [
-            { "unit.value": unitValue },
-            { "lesson.lesson_title": oldLesson.lesson.lesson_title },
-          ],
-        },
-      );
-
-    if (updateResult.matchedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Teacher, unit, or lesson not found for replacement",
-      });
-    }
-
-    console.log(
-      `Lesson replaced successfully: ${oldLesson.lesson.lesson_title} -> ${newLesson.lesson.lesson_title} in unit ${unitValue} for teacher ${teacherName}`,
-    );
-
-    // --- Emit Socket.IO event to update lesson management modal ---
-    io.emit("lessonReplaced", {
-      teacherName: teacherName,
-      unitValue: unitValue,
-      oldLesson: {
-        _id: oldLessonId,
-        lesson_title: oldLesson.lesson.lesson_title,
-      },
-      newLesson: {
-        _id: newLessonId,
-        lesson_title: newLesson.lesson.lesson_title,
-      },
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Lesson replaced successfully",
-      replacedLesson: {
-        _id: newLessonId,
-        lesson_title: newLesson.lesson.lesson_title,
-      },
-    });
-  } catch (error) {
-    console.error("Error replacing lesson in unit:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
-  }
-});
-
-// Save unit changes endpoint
-app.post("/saveUnitChanges", async (req, res) => {
-  try {
-    const { teacherName, unitValue, lessons } = req.body;
-
-    // Debug logging
-    console.log("Save unit changes request received:");
-    console.log("teacherName:", teacherName);
-    console.log("unitValue:", unitValue);
-    console.log("lessons:", lessons);
-
-    if (!teacherName || !unitValue || !Array.isArray(lessons)) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required parameters: teacherName, unitValue, lessons",
-      });
-    }
-
-    // Update the unit's lessons in the teacher's document
-    const updateResult = await client
-      .db("TrinityCapital")
-      .collection("Teachers")
-      .updateOne(
-        {
-          name: teacherName,
-          "units.value": unitValue,
-        },
-        {
-          $set: {
-            "units.$.lessons": lessons,
-          },
-        },
-      );
-
-    if (updateResult.matchedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Teacher or unit not found",
-      });
-    }
-
-    if (updateResult.modifiedCount === 0) {
-      return res.status(200).json({
-        success: true,
-        message: "No changes were made to the unit",
-      });
-    }
-
-    console.log(
-      `Unit ${unitValue} updated successfully for teacher ${teacherName} with ${lessons.length} lessons`,
-    );
-
-    // --- Emit Socket.IO event to update lesson management modal ---
-    io.emit("unitSaved", {
-      teacherName: teacherName,
-      unitValue: unitValue,
-      lessons: lessons,
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Unit changes saved successfully",
-      unitValue: unitValue,
-      lessonsCount: lessons.length,
-    });
-  } catch (error) {
-    console.error("Error saving unit changes:", error);
-    res.status(500).json({
-      success: false,
-      message: "Internal server error",
-      error: error.message,
-    });
-  }
-});
-
 // --- SMTP CONFIG ENCRYPTION UTILS ---
 const SMTP_SECRET = process.env.SMTP_SECRET || "changeme!";
 function getKey() {
@@ -4656,12 +4459,59 @@ app.get("/studentsInPeriod/:period", async (req, res) => {
   }
 });
 
-// Get all assigned units with full lesson content for a student
+// Get assigned units for a student - SIMPLE VERSION
 app.get("/student/:studentId/assignedUnits", async (req, res) => {
   try {
     const { studentId } = req.params;
 
-    console.log(`=== GET /student/${studentId}/assignedUnits ===`);
+    console.log(`GET /student/${studentId}/assignedUnits`);
+
+    // Find the student profile
+    const studentProfile = await client
+      .db("TrinityCapital")
+      .collection("User Profiles")
+      .findOne({
+        $or: [
+          { _id: studentId },
+          { username: studentId },
+          { memberName: studentId },
+        ],
+      });
+
+    if (!studentProfile) {
+      console.log(`Student not found: ${studentId}`);
+      return res.status(404).json({
+        success: false,
+        error: "Student not found",
+      });
+    }
+
+    console.log(`✅ Found student: ${studentProfile.memberName}`);
+    console.log(
+      `Assigned UnitIds: ${(studentProfile.assignedUnitIds || []).length}`,
+    );
+
+    return res.status(200).json({
+      success: true,
+      assignedUnitIds: studentProfile.assignedUnitIds || [],
+      studentName: studentProfile.memberName,
+    });
+  } catch (error) {
+    console.error("Error fetching student assigned units:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Failed to fetch assigned units",
+      message: error.message,
+    });
+  }
+});
+
+// Get all assigned units with full lesson content for a student
+app.get("/student/:studentId/assignedUnits-fullcontent", async (req, res) => {
+  try {
+    const { studentId } = req.params;
+
+    console.log(`=== GET /student/${studentId}/assignedUnits-fullcontent ===`);
     console.log("Request received at:", new Date().toISOString());
     console.log("Student ID:", studentId);
 
